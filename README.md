@@ -1,6 +1,6 @@
-# OpenCiv4
+# OpenCiv4 (Linux fork)
 
-[![build](https://github.com/bssth/openciv4/actions/workflows/build.yml/badge.svg)](https://github.com/bssth/openciv4/actions/workflows/build.yml)
+[![upstream build](https://github.com/bssth/openciv4/actions/workflows/build.yml/badge.svg)](https://github.com/bssth/openciv4/actions/workflows/build.yml)
 [![Status](https://img.shields.io/badge/status-alpha-orange)]()
 ![MIU](https://img.shields.io/badge/made_in-Ukraine-ffd700?labelColor=0057b7)
 
@@ -17,19 +17,92 @@ is rebuilt for x64.
 
 Discussion: [CivFanatics thread](https://forums.civfanatics.com/threads/openciv4-clean-room-x64-engine-reimplementation.705223/).
 
+## About this fork
+
+[foofly/openciv4](https://github.com/foofly/openciv4) adds a native x86-64 Linux port to
+[bssth/openciv4](https://github.com/bssth/openciv4). The default branch is `linux-port`.
+It reuses upstream's SDL3 window/input/audio, FreeType text and POSIX compatibility support,
+and adds Vulkan rendering plus the build and runtime fixes described below.
+
+The game core is pinned to a commit in [foofly/openciv4-dll](https://github.com/foofly/openciv4-dll).
+Its Linux fixes are committed there, so recursive clones include them without applying a
+patch during setup. The engine port was introduced in
+[461b1e4](https://github.com/foofly/openciv4/commit/461b1e4); the game-core fixes were introduced in
+[8b94754](https://github.com/foofly/openciv4-dll/commit/8b94754).
+
+Start with [Building on Linux](#building-linux-x86-64). Existing Windows and macOS instructions
+are retained below. The badge above reports the upstream build; it does not certify this
+fork's Linux branch.
+
+### Changes from upstream
+
+| Area | Code changes and resulting behavior |
+|---|---|
+| Build configuration | `CMakePresets.json` adds Clang/Ninja Linux Release and Debug presets. CMake links the POSIX loader library and OpenSSL Crypto, uses the target's actual game-core filename, and discovers optional FFmpeg through pkg-config. |
+| Dependency setup | `tools/setup_linux.py` downloads sources with pinned SHA-256 hashes and builds a private shared Python 2.7.18. It supplies pybind11, SDL3, FreeType, zlib, DirectXMath and dr_mp3, with optional pinned shader tools. System Python is unchanged. |
+| Vulkan shaders | `tools/shaders/gen_spirv.py` translates the existing HLSL for all six model, overlay and terrain stages. It combines image samplers, restores SDL descriptor sets, preserves the terrain uniform layout, validates SPIR-V, and supports `--check` for stale generated output. `SpirvShaders.inc` embeds the results, so normal builds need no shader compiler. |
+| Renderer | `Renderer.cpp` selects SDL's Vulkan/SPIR-V path on Linux and reports Vulkan initialization failures. The existing Windows DXBC and macOS Metal paths remain. `Renderer::createTexture()` gains an explicit array option; terrain atlases, details and decals retain array views even when they have only one layer. |
+| Asset lookup | `AssetResolver` indexes normalized loose-file keys while retaining actual filesystem spelling. Mixed-case paths work on case-sensitive filesystems; mod/expansion/base priority and loose-file precedence over archives are preserved. The same index serves asset listings used by XML and Python loading. |
+| Installation discovery | `InstallLocator` searches native and Flatpak Steam locations and additional libraries in `libraryfolders.vdf`. Explicit `--civ4` and `OC4_CIV4_DIR` paths remain available for GOG, disc and other layouts. |
+| Saves | `SaveFile.cpp` uses OpenSSL EVP MD5 on Linux for the existing save checksum. The Windows BCrypt and macOS CommonCrypto implementations remain; the serialized save format is unchanged by this port. |
+| Networking | `Net.cpp` supplies the POSIX descriptor range to `select()`, prevents a disconnected peer from terminating Linux through SIGPIPE, clears a closed listener handle, and explicitly includes the header needed for `std::exchange`. The wire protocol is unchanged. |
+| Mods and paths | Relative `--mod` paths accept forward slashes or backslashes, while save metadata retains Windows separators. Non-Windows game-core loading rejects mods containing custom cores with a clear diagnostic. XML/Python/art mods use the linked vanilla native core. |
+| Automated tests | `linux_assets_test` covers mixed-case/UTF-8 assets, layer priority and Steam discovery. `linux_net_test` exercises TCP accept, welcome data and disconnect handling. `vulkan_smoke_test` draws synthetic terrain, exercises one-layer arrays and storage buffers, creates all shader stages, checks overlay pixels/orientation, and fails on SDL error logs. |
+| CI and gameplay checks | The Ubuntu 24.04 job builds the engine, checks shader regeneration and runs CTest with Xvfb/Mesa Vulkan. `tools/validate_linux.py` checks repeated autoplay, save/resume, data mods, custom-core diagnostics and optional rendering/menu launch; `--reference` accepts a Windows checksum log. |
+| Repository and documentation | `.gitmodules` pins the forked game core. `.gitignore` excludes local `civ4/` assets/installers and Python caches in addition to existing build/dependency exclusions. This README and `docs/linux-validation.md` document setup, usage and validation. |
+
+The [game-core README](https://github.com/foofly/openciv4-dll#changes-in-this-fork) lists
+its individual include-path, logging and variadic-format fixes.
+This fork does not introduce gameplay-rule or AI changes.
+
+### Linux validation and limitations
+
+Local validation used Fedora 44, Clang 22.1.8, SDL 3.4.18, Mesa software Vulkan and a
+Beyond the Sword installation reporting version 3.19:
+
+* All **11 CTest cases** pass. Vulkan rendering passes under X11/Xvfb and Wayland with
+  Khronos validation layers enabled, including synthetic terrain and overlay readback.
+* A **100-turn Fractal/Standard/seed-7** game repeats exactly. A turn-50 save resumes with
+  identical checksums through turn 100; the final checksum is `D7D43800`.
+* Matching three-turn graphics/headless runs agree. The menu, original Python interface,
+  map and models render with the supplied assets. **Next War** runs, saves and reloads.
+* The audio scanner decodes **2,370 base-game WAV/MP3 files** with zero failures. Vulkan
+  shader regeneration is reproducible with the pinned tools; the Metal generator also runs.
+
+Hardware GPU drivers, physical audio output, a full manual playthrough, optional FFmpeg
+movies, a Windows checksum reference and an original-game save fixture still need validation.
+Native Windows/macOS builds and the new Ubuntu CI job have not been run for this fork.
+The workflow includes manual dispatch; its push filter targets `master` and version tags,
+so ordinary `linux-port` pushes do not start CI.
+Custom C++ mod cores, Linux ARM64, Steam Deck certification and Linux release packages are
+outside the initial port. See the [validation report](docs/linux-validation.md) for commands
+and remaining checks.
+
 ## Playing
 
-Download the zip of the latest [release](https://github.com/bssth/openciv4/releases), unpack it
+**Linux:** build this fork using the [Linux instructions](#building-linux-x86-64), then run:
+
+```sh
+./build/linux-release/bin/oc4core --civ4 "/path/to/Civ4" --menu
+```
+
+`/path/to/Civ4` must contain `Assets`, `Warlords` and `Beyond the Sword`. This fork currently
+provides source builds for Linux; the downloads below are upstream Windows releases.
+
+**Windows:** download the zip of the latest [upstream release](https://github.com/bssth/openciv4/releases), unpack it
 anywhere and start `Play Beyond the Sword.bat`; `README.txt` inside says the rest. Windows 10
 or 11, 64-bit, with a Direct3D 12 graphics card.
 
-**Mods.** `Play Mod.bat` takes a mod's folder (drop it onto the file). Mods that change only
+**Windows mods.** `Play Mod.bat` takes a mod's folder (drop it onto the file). Mods that change only
 XML, Python and art run on the vanilla game core. A mod with a game core of its own runs when
 its `Assets` folder has the 64-bit build, `CvGameCoreDLL-x64.dll`, next to the 32-bit
 `CvGameCoreDLL.dll` the original game loads: one copy of the mod serves both games. How to
 port a mod's game core: [openciv4-dll/docs/PORTING.md](https://github.com/bssth/openciv4-dll/blob/main/docs/PORTING.md).
 
 ## What works
+
+The engine's existing feature overview follows. The checks completed for this Linux fork
+are listed under [Linux validation and limitations](#linux-validation-and-limitations).
 
 * **Playing a game**, new or loaded (saves of the original game load too): the game's own
   interface (`CvMainInterface.py` and the mod's screens, drawn with the game's interface
@@ -52,7 +125,7 @@ mod game cores on Linux and macOS. Native Linux uses SDL3's Vulkan backend; macO
 
 Visual Studio 2022 or 2026 with **Desktop development with C++** (CMake and Ninja come with
 it). The game core is the `gamecore` submodule
-([openciv4-dll](https://github.com/bssth/openciv4-dll)): clone with `git clone --recursive`, or
+([this fork's openciv4-dll](https://github.com/foofly/openciv4-dll)): clone with `git clone --recursive`, or
 run `git submodule update --init`.
 
 Third-party packages go under `external\` (not committed; `.github/workflows/build.yml`
@@ -109,6 +182,8 @@ sudo dnf install git clang cmake ninja-build pkgconf-pkg-config gcc gcc-c++ make
 Install the Vulkan driver for your GPU (NVIDIA users need their matching driver). Then:
 
 ```sh
+git clone --recurse-submodules --branch linux-port https://github.com/foofly/openciv4.git
+cd openciv4
 git submodule update --init
 python3 tools/setup_linux.py
 cmake --preset linux-release
@@ -257,7 +332,7 @@ Tools for the game's files, in `build\Release\bin`:
 | `src/audio`, `src/media` | sound mixer, WAV/MP3; movies through FFmpeg |
 | `apps/oc4core` | the engine: the SDK's engine interfaces, Python host, saves, the game's screens |
 | `apps/nifview`, `tools` | the viewer and the tools above |
-| `gamecore` | the x64 game core and the guide to porting a mod's ([openciv4-dll](https://github.com/bssth/openciv4-dll)) |
+| `gamecore` | the pinned native game core ([foofly/openciv4-dll](https://github.com/foofly/openciv4-dll)), based on the [upstream SDK port](https://github.com/bssth/openciv4-dll) |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before sending a change.
 
