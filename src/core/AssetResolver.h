@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -70,6 +71,7 @@ namespace oc4
 		{
 			std::filesystem::path root;
 			std::vector<std::unique_ptr<FpkArchive>> archives;
+			std::map<std::string, std::filesystem::path> loose;
 		};
 
 		std::optional<AssetLocation> locateKey(const std::string& key) const;

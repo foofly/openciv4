@@ -11,6 +11,45 @@ permissions:
   contents: read
 
 jobs:
+  linux-x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Linux development packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build pkg-config build-essential python3-dev libssl-dev libffi-dev zlib1g-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxext-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev libasound2-dev libpulse-dev libdecor-0-dev \
+            libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers xvfb fonts-dejavu-core
+      - uses: actions/cache@v4
+        with:
+          path: external
+          key: linux-deps-v1-${{ hashFiles('tools/setup_linux.py') }}
+      - name: Verified dependencies and shader tools
+        run: python3 tools/setup_linux.py --shader-tools --jobs 2
+      - name: Check generated Vulkan shaders
+        run: python3 tools/shaders/gen_spirv.py --check
+      - name: Build
+        run: |
+          cmake --preset linux-release -DOC4_VULKAN_TEST=ON
+          cmake --build --preset linux-release --parallel 2
+      - name: Test with software Vulkan
+        env:
+          SDL_VIDEODRIVER: x11
+          SDL_AUDIODRIVER: dummy
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+          OC4_GPU_DEBUG: "1"
+        run: xvfb-run -a ctest --test-dir build/linux-release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: linux-test-logs
+          path: build/linux-release/Testing/Temporary/
+
   windows-x64:
     runs-on: windows-2022
     steps:

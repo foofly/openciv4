@@ -221,8 +221,9 @@ float3 globeBend(float3 p)
 		void setFog(const GpuImage* plots, float plotSize, uint32_t columns, uint32_t rows, bool wrapX, bool wrapY);
 
 		// Textures: subresources layer by layer, each layer's mips from the largest, rows tightly packed.
+		// array retains an array view even with one layer (Texture2DArray in the shader).
 		std::shared_ptr<GpuImage> createTexture(uint32_t width, uint32_t height, uint32_t layers, uint32_t mips, TextureFormat format,
-			std::span<const std::span<const uint8_t>> subresources);
+			std::span<const std::span<const uint8_t>> subresources, bool array = false);
 		void updateTexture(GpuImage& image, uint32_t layer, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void* pixels);
 		std::shared_ptr<GpuBuffer> createBuffer(SDL_GPUBufferUsageFlags usage, const void* data, uint32_t size);
 

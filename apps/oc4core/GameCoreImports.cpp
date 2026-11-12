@@ -1,4 +1,5 @@
 #include "GameCoreImports.h"
+#include "core/FileUtil.h"
 
 #ifndef _WIN32
 
@@ -15,7 +16,9 @@ namespace oc4::host
 	std::filesystem::path loadGameCore(const std::optional<std::filesystem::path>& modAssets)
 	{
 		if (modAssets)
-			std::fprintf(stderr, "[oc4core] a mod's own game core is not loaded on this platform yet: running the vanilla one\n");
+			for (const auto& file : std::filesystem::directory_iterator(*modAssets))
+				if (file.is_regular_file() && toLowerAscii(utf8Path(file.path().filename())).starts_with("cvgamecoredll"))
+					throw std::runtime_error("This mod requires a custom game core, which is not supported on this platform yet: " + modAssets->string());
 		Dl_info info{};
 		if (!dladdr(reinterpret_cast<const void*>(&DLLPublishToPython), &info) || !info.dli_fname)
 			throw std::runtime_error("cannot locate the game core");

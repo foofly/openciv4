@@ -19,12 +19,6 @@ namespace oc4
 
 	namespace
 	{
-		bool isFile(const fs::path& p)
-		{
-			std::error_code ec;
-			return fs::is_regular_file(p, ec);
-		}
-
 		std::string withExtension(std::string_view key, std::string_view ext)
 		{
 			const size_t slash = key.rfind('/');
@@ -71,7 +65,7 @@ namespace oc4
 
 	void AssetResolver::addLayer(const fs::path& assetsDir)
 	{
-		Layer layer{ assetsDir, {} };
+		Layer layer{ assetsDir, {}, {} };
 		std::vector<fs::path> packs;
 		std::error_code ec;
 		for (const auto& e : fs::directory_iterator(assetsDir, ec))
@@ -80,6 +74,15 @@ namespace oc4
 		std::ranges::sort(packs);
 		for (const auto& p : packs)
 			layer.archives.push_back(std::make_unique<FpkArchive>(p));
+		// Retain the spelling on disk: normalised keys are not valid paths on Linux.
+		std::vector<fs::path> files;
+		for (auto it = fs::recursive_directory_iterator(assetsDir, fs::directory_options::skip_permission_denied, ec);
+			it != fs::recursive_directory_iterator(); it.increment(ec))
+			if (!ec && it->is_regular_file())
+				files.push_back(it->path());
+		std::ranges::sort(files);
+		for (const auto& file : files)
+			layer.loose.try_emplace(makeAssetKey(utf8GenericPath(file.lexically_relative(assetsDir))), file);
 		m_layers.push_back(std::move(layer));
 		m_found->byKey.clear();
 	}
@@ -97,8 +100,8 @@ namespace oc4
 		for (size_t i = 0; i < m_layers.size() && !found; ++i)
 		{
 			const Layer& layer = m_layers[i];
-			if (const fs::path p = layer.root / fs::path(key); isFile(p))
-				found = AssetLocation{ key, i, p, nullptr, nullptr };
+			if (const auto file = layer.loose.find(key); file != layer.loose.end())
+				found = AssetLocation{ key, i, file->second, nullptr, nullptr };
 			for (size_t a = 0; a < layer.archives.size() && !found; ++a)
 				if (const auto* entry = layer.archives[a]->find(key))
 					found = AssetLocation{ key, i, {}, layer.archives[a].get(), entry };
@@ -165,15 +168,9 @@ namespace oc4
 		for (size_t i = 0; i < m_layers.size(); ++i)
 		{
 			const Layer& layer = m_layers[i];
-			std::error_code ec;
-			for (auto it = fs::recursive_directory_iterator(layer.root, fs::directory_options::skip_permission_denied, ec);
-				it != fs::recursive_directory_iterator(); it.increment(ec))
-			{
-				if (ec || !it->is_regular_file() || toLowerAscii(utf8Path(it->path().extension())) != ext)
-					continue;
-				std::string key = makeAssetKey(utf8GenericPath(it->path().lexically_relative(layer.root)));
-				found.try_emplace(key, AssetLocation{ key, i, it->path(), nullptr, nullptr });
-			}
+			for (const auto& [key, file] : layer.loose)
+				if (key.ends_with(ext))
+					found.try_emplace(key, AssetLocation{ key, i, file, nullptr, nullptr });
 			for (const auto& archive : layer.archives)
 				for (const auto& e : archive->entries())
 				{

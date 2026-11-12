@@ -6,8 +6,10 @@
 
 #ifdef _WIN32
 #include <bcrypt.h>
-#else
+#elif defined(__APPLE__)
 #include <CommonCrypto/CommonDigest.h>
+#else
+#include <openssl/evp.h>
 #endif
 #include <zlib.h>
 
@@ -130,8 +132,12 @@ namespace oc4::host
 #ifdef _WIN32
 			BCryptHash(BCRYPT_MD5_ALG_HANDLE, nullptr, 0, reinterpret_cast<PUCHAR>(const_cast<std::byte*>(data.data())), ULONG(data.size()), hash,
 				sizeof hash);
-#else
+#elif defined(__APPLE__)
 			CC_MD5(data.data(), CC_LONG(data.size()), hash);
+#else
+			unsigned int length = 0;
+			if (EVP_Digest(data.data(), data.size(), hash, &length, EVP_md5(), nullptr) != 1 || length != sizeof hash)
+				throw std::runtime_error("MD5 unavailable: cannot generate the original save checksum");
 #endif
 			static constexpr char hex[] = "0123456789abcdef";
 			std::string s;

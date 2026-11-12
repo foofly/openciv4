@@ -802,7 +802,7 @@ float4 PSTerrain(PSIn i) : SV_Target
 				std::memcpy(&terrainColors[t], px.data(), 4);
 			}
 			const std::vector<std::span<const uint8_t>> subresources(levels.begin(), levels.end());
-			atlasTex = renderer.createTexture(kTile, kTile, uint32_t(count * kSlots), kTileMips, TextureFormat::BGRA8, subresources);
+			atlasTex = renderer.createTexture(kTile, kTile, uint32_t(count * kSlots), kTileMips, TextureFormat::BGRA8, subresources, true);
 			buildDetails();
 
 			// Layer orders, then per terrain and mask (offset << 8 | count), then the slot entries.
@@ -866,7 +866,7 @@ float4 PSTerrain(PSIn i) : SV_Target
 			if (levels.empty())
 				return;
 			const std::vector<std::span<const uint8_t>> subresources(levels.begin(), levels.end());
-			detailTex = renderer.createTexture(kSize, kSize, uint32_t(map.terrains.size()), kMips, TextureFormat::BGRA8, subresources);
+			detailTex = renderer.createTexture(kSize, kSize, uint32_t(map.terrains.size()), kMips, TextureFormat::BGRA8, subresources, true);
 		}
 
 		// Features whose art is a texture (flood plains) are painted on the ground: one array
@@ -940,7 +940,7 @@ float4 PSTerrain(PSIn i) : SV_Target
 			if (textures.empty())
 				levels.assign(kMips, std::vector<uint8_t>(kSize * kSize * 4, 0)); // the shader still samples one
 			const std::vector<std::span<const uint8_t>> subresources(levels.begin(), levels.end());
-			decalTex = renderer.createTexture(kSize, kSize, uint32_t(std::max<size_t>(textures.size(), 1)), kMips, TextureFormat::BGRA8, subresources);
+			decalTex = renderer.createTexture(kSize, kSize, uint32_t(std::max<size_t>(textures.size(), 1)), kMips, TextureFormat::BGRA8, subresources, true);
 		}
 
 		LoadedModel* model(const std::string& nif, const std::string& kfm)

@@ -37,6 +37,16 @@ namespace oc4::render
 #include "MslShaders.inc"
 		};
 #endif
+#ifdef __linux__
+		struct SpirvShader
+		{
+			const char* file;
+			const char* entry;
+			const uint32_t* code;
+			size_t size;
+		};
+#include "SpirvShaders.inc"
+#endif
 		constexpr char kShaderBody[] = R"hlsl(
 
 cbuffer Object : register(b1, UNIFORMS)
@@ -411,11 +421,17 @@ float4 PSOverlay(Out p) : SV_Target
 			fail("SDL_InitSubSystem");
 #ifdef __APPLE__
 		m_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL, debug, nullptr);
+#elif defined(__linux__)
+		m_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, debug, "vulkan");
 #else
 		m_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_DXBC, debug, nullptr);
 #endif
 		if (!m_device)
+#ifdef __linux__
+			fail("SDL_CreateGPUDevice (Linux requires a Vulkan driver; check vulkaninfo)");
+#else
 			fail("SDL_CreateGPUDevice");
+#endif
 		if (m_window && !SDL_ClaimWindowForGPUDevice(m_device, m_window))
 			fail("SDL_ClaimWindowForGPUDevice");
 		if (!SDL_GPUTextureSupportsFormat(m_device, m_depthFormat, SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET))
@@ -504,6 +520,19 @@ float4 PSOverlay(Out p) : SV_Target
 		ci.code_size = std::strlen(msl->source);
 		ci.entrypoint = entry;
 		ci.format = SDL_GPU_SHADERFORMAT_MSL;
+#elif defined(__linux__)
+		(void)source;
+		const SpirvShader* spirv = nullptr;
+		for (const auto& candidate : kSpirvShaders)
+			if (std::strcmp(candidate.file, name) == 0 && std::strcmp(candidate.entry, entry) == 0)
+				spirv = &candidate;
+		if (!spirv)
+			throw std::runtime_error(std::format("{} {}: no Vulkan translation (run tools/shaders/gen_spirv.py)", name, entry));
+		SDL_GPUShaderCreateInfo ci{};
+		ci.code = reinterpret_cast<const Uint8*>(spirv->code);
+		ci.code_size = spirv->size;
+		ci.entrypoint = "main";
+		ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
 #else
 		const bool vertex = stage == SDL_GPU_SHADERSTAGE_VERTEX;
 		const D3D_SHADER_MACRO defines[] = { { "UNIFORMS", vertex ? "space1" : "space3" }, { nullptr, nullptr } };
@@ -748,10 +777,10 @@ float4 PSOverlay(Out p) : SV_Target
 	}
 
 	std::shared_ptr<GpuImage> Renderer::createTexture(uint32_t width, uint32_t height, uint32_t layers, uint32_t mips, TextureFormat format,
-		std::span<const std::span<const uint8_t>> subresources)
+		std::span<const std::span<const uint8_t>> subresources, bool array)
 	{
 		SDL_GPUTextureCreateInfo ci{};
-		ci.type = layers > 1 ? SDL_GPU_TEXTURETYPE_2D_ARRAY : SDL_GPU_TEXTURETYPE_2D;
+		ci.type = array || layers > 1 ? SDL_GPU_TEXTURETYPE_2D_ARRAY : SDL_GPU_TEXTURETYPE_2D;
 		ci.format = toSdl(format);
 		ci.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
 		ci.width = width;

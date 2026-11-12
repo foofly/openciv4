@@ -10,6 +10,7 @@
 #include <format>
 #include <map>
 #include <stdexcept>
+#include <utility>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -83,7 +84,12 @@ namespace oc4::host
 		{
 			while (size > 0)
 			{
-				const int n = ::send(s, data, int(std::min<size_t>(size, 1 << 20)), 0);
+#ifdef __linux__
+				const int flags = MSG_NOSIGNAL; // a disconnected peer must not terminate the game
+#else
+				const int flags = 0;
+#endif
+				const int n = ::send(s, data, int(std::min<size_t>(size, 1 << 20)), flags);
 				if (n <= 0)
 					return false;
 				data += n;
@@ -181,7 +187,7 @@ namespace oc4::host
 				FD_ZERO(&ready);
 				FD_SET(SOCKET(m_listener), &ready);
 				timeval wait{ 0, 100000 };
-				if (::select(0, &ready, nullptr, nullptr, &wait) > 0)
+				if (::select(int(SOCKET(m_listener)) + 1, &ready, nullptr, nullptr, &wait) > 0)
 					break;
 				if (waiting && !waiting(i))
 					throw std::runtime_error("multiplayer: the host gave up waiting for the others");
@@ -301,7 +307,10 @@ namespace oc4::host
 			closesocket(link->socket);
 		}
 		if (m_listener != ~uintptr_t(0))
+		{
 			closesocket(SOCKET(m_listener));
+			m_listener = ~uintptr_t(0);
+		}
 		if (m_producer.joinable())
 			m_producer.join();
 		for (auto& link : m_links)

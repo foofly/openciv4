@@ -45,9 +45,8 @@ port a mod's game core: [openciv4-dll/docs/PORTING.md](https://github.com/bssth/
   game cores ported to x64.
 * **Multiplayer** over the network (`--host`, `--join`), early.
 
-Not yet: the original's main menu (a simpler one stands in), the minimap's modes, the globe
-view, some animations, Linux and macOS (the window, input, sound and text are already on SDL3
-and FreeType; the shaders are still HLSL for Direct3D 12).
+Not yet: the original's main menu (a simpler one stands in), some animations, and custom
+mod game cores on Linux and macOS. Native Linux uses SDL3's Vulkan backend; macOS uses Metal.
 
 ## Building (Windows, x64)
 
@@ -86,6 +85,84 @@ Mods' game cores ported to x64 are built along when their sources are there
 
 Profile-guided optimisation of the game core (optional, about 20 minutes, needs the game):
 `tools\pgo.cmd "<Civ4>"`, another 5-10% off late-game turns with identical game results.
+
+## Building (Linux, x86-64)
+
+Clang, CMake 3.28+, Ninja and Python 3.12+ are required. Ubuntu 24.04 prerequisites:
+
+```sh
+sudo apt-get install git cmake clang ninja-build pkg-config build-essential python3-dev libssl-dev libffi-dev zlib1g-dev \
+  libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxext-dev \
+  libwayland-dev wayland-protocols libxkbcommon-dev libasound2-dev libpulse-dev libdecor-0-dev \
+  libvulkan-dev mesa-vulkan-drivers fonts-dejavu-core
+```
+
+On Fedora:
+
+```sh
+sudo dnf install git clang cmake ninja-build pkgconf-pkg-config gcc gcc-c++ make python3-devel openssl-devel libffi-devel zlib-devel \
+  libX11-devel libXcursor-devel libXi-devel libXrandr-devel libXScrnSaver-devel libXfixes-devel libXext-devel \
+  wayland-devel wayland-protocols-devel libxkbcommon-devel alsa-lib-devel pulseaudio-libs-devel \
+  libdecor-devel vulkan-loader-devel mesa-vulkan-drivers dejavu-sans-fonts
+```
+
+Install the Vulkan driver for your GPU (NVIDIA users need their matching driver). Then:
+
+```sh
+git submodule update --init
+python3 tools/setup_linux.py
+cmake --preset linux-release
+cmake --build --preset linux-release --parallel 4
+ctest --test-dir build/linux-release --output-on-failure
+build/linux-release/bin/oc4core --civ4 "/path/to/Civ4" --menu
+```
+
+The setup script verifies pinned source archives and builds a private shared Python 2.7.18
+under `external/python27`; it does not replace your system Python. This fork pins a game-core
+commit containing the case-sensitive include and POSIX formatting fixes. Debug builds use the
+`linux-debug` preset. FFmpeg is optional: install development packages for libavcodec,
+libavformat and libavutil for movies, or set `OC4_FFMPEG_DIR` to a compatible prefix.
+
+`--civ4` is the directory containing `Assets`, `Warlords` and `Beyond the Sword`, not the
+expansion directory itself. `OC4_CIV4_DIR` sets the same default. Native and Flatpak Steam
+libraries are searched automatically. For the extracted GOG layout in this workspace:
+
+```sh
+build/linux-release/bin/oc4core --civ4 "$PWD/civ4/game/Civ4" --menu
+```
+
+Saves and settings use `~/Documents/My Games`; `OC4_DOCUMENTS=/absolute/path` redirects them.
+The original assets are read in place. XML/Python/art mods work with the vanilla game core,
+for example `--mod "Mods/Next War"`. Mods shipping a custom game core are rejected until
+native mod-core loading is implemented. Windows DLLs cannot be used by the native executable.
+
+Vulkan shaders are checked in, so normal builds need no shader tools. After changing HLSL:
+
+```sh
+python3 tools/setup_linux.py --shader-tools
+python3 tools/shaders/gen_spirv.py
+python3 tools/shaders/gen_spirv.py --check
+```
+
+This builds pinned glslang, SPIRV-Tools and SPIRV-Cross locally. Also regenerate the Metal
+shaders as described below. An asset-free Vulkan pipeline/overlay test is built as
+`build/linux-release/bin/vulkan_smoke_test`; enable it in CTest with `-DOC4_VULKAN_TEST=ON`.
+It requires a working display and Vulkan driver. CI runs it under Xvfb with Mesa software
+rendering. `OC4_GPU_DEBUG=1` enables GPU diagnostics. If GPU creation fails, check `vulkaninfo`
+and the installed driver; headless simulation (`--turns`, without rendering options) requires
+neither a display nor a GPU.
+
+For local gameplay and save/resume checks using your own assets:
+
+```sh
+python3 tools/validate_linux.py --civ4 "$PWD/civ4/game/Civ4" --graphics
+```
+
+This writes logs, screenshots and isolated saves/settings under `build/linux-validation`.
+Omit `--graphics` for a display-free run. `--reference windows.log` additionally compares a
+Windows run with the same Fractal/Standard/seed-7 settings; it is not claimed without a
+reference log. Game files and installers under `civ4/` are ignored by Git.
+See [local validation results and remaining checks](docs/linux-validation.md).
 
 ## Building (macOS, Apple Silicon)
 

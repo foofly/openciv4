@@ -5,3 +5,5 @@
 *.user
 /external/
 /mods/
+/civ4/
+__pycache__/
