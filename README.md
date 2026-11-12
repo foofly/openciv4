@@ -5,8 +5,9 @@
 ![MIU](https://img.shields.io/badge/made_in-Ukraine-ffd700?labelColor=0057b7)
 
 An experimental, clean-room, 64-bit engine for *Sid Meier's Civilization IV: Beyond the Sword*
-that runs on the original game's assets. Nothing from the game is included in this
-repository: you need your own installed copy (3.19, Steam, GOG or disc).
+that runs on the original game's assets. Game assets and installers are not bundled:
+you need your own installed copy (3.19, Steam, GOG or disc). The `gamecore` submodule
+does include Firaxis SDK source under separate terms; see [distribution and licensing](#distribution-and-licensing).
 
 The game's own game core (`CvGameCoreDLL`, from the SDK Firaxis released, rebuilt as 64-bit)
 and its Python scripts run as they are; openciv4 does the rest: the map, the interface, the
@@ -335,6 +336,20 @@ Tools for the game's files, in `build\Release\bin`:
 | `gamecore` | the pinned native game core ([foofly/openciv4-dll](https://github.com/foofly/openciv4-dll)), based on the [upstream SDK port](https://github.com/bssth/openciv4-dll) |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before sending a change.
+
+## Distribution and licensing
+
+The [distribution audit](docs/distribution-audit.md) checked both forks' public Git
+history and release attachments. It found no game installers, textures, models,
+audio, movies or saves. Local game files remain outside the published source.
+`tools/check_distribution.py --staged` checks proposed commits, and the separate
+source-audit workflow checks committed files and history on pushes and pull requests.
+
+The engine's MIT license retains the original copyright notices. The Firaxis SDK
+source is intentionally retained in `gamecore` under the SDK's separate terms;
+the MIT license does not apply to it. The inherited project icon is recorded as a
+specific exception in the audit. These checks keep commercial game files out of
+the source distribution; they do not replace the applicable source and artwork licenses.
 
 ## Legal
 
