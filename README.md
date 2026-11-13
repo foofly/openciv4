@@ -46,7 +46,8 @@ fork's Linux branch.
 | Asset lookup | `AssetResolver` indexes normalized loose-file keys while retaining actual filesystem spelling. Mixed-case paths work on case-sensitive filesystems; mod/expansion/base priority and loose-file precedence over archives are preserved. The same index serves asset listings used by XML and Python loading. |
 | Installation discovery | `InstallLocator` searches native and Flatpak Steam locations and additional libraries in `libraryfolders.vdf`. Explicit `--civ4` and `OC4_CIV4_DIR` paths remain available for GOG, disc and other layouts. |
 | Saves | `SaveFile.cpp` uses OpenSSL EVP MD5 on Linux for the existing save checksum. The Windows BCrypt and macOS CommonCrypto implementations remain; the serialized save format is unchanged by this port. |
-| Networking | `Net.cpp` supplies the POSIX descriptor range to `select()`, prevents a disconnected peer from terminating Linux through SIGPIPE, clears a closed listener handle, and explicitly includes the header needed for `std::exchange`. The wire protocol is unchanged. |
+| Networking | `Net.cpp` supplies the POSIX descriptor range to `select()`, prevents a disconnected peer from terminating Linux through SIGPIPE, clears a closed listener handle, and explicitly includes the header needed for `std::exchange`. The existing `--host`/`--join` wire protocol is unchanged. |
+| PitBoss | `Pitboss.cpp` adds the Linux dedicated server, seat authentication, ordered frames, local admin socket, timers, durable checkpoints and journal replay. `PitbossGame.cpp` adapts the SDK and validates commands; `GameSession`, `Utility` and `Net` connect server and client roles. The menu adds seat/password login and screen edit-box input. [Operator guide](docs/pitboss.md). |
 | Mods and paths | Relative `--mod` paths accept forward slashes or backslashes, while save metadata retains Windows separators. Non-Windows game-core loading rejects mods containing custom cores with a clear diagnostic. XML/Python/art mods use the linked vanilla native core. |
 | Automated tests | `linux_assets_test` covers mixed-case/UTF-8 assets, layer priority and Steam discovery. `linux_net_test` exercises TCP accept, welcome data and disconnect handling. `vulkan_smoke_test` draws synthetic terrain, exercises one-layer arrays and storage buffers, creates all shader stages, checks overlay pixels/orientation, and fails on SDL error logs. |
 | CI and gameplay checks | The Ubuntu 24.04 job builds the engine, checks shader regeneration and runs CTest with Xvfb/Mesa Vulkan. `tools/validate_linux.py` checks repeated autoplay, save/resume, data mods, custom-core diagnostics and optional rendering/menu launch; `--reference` accepts a Windows checksum log. |
@@ -61,12 +62,15 @@ This fork does not introduce gameplay-rule or AI changes.
 Local validation used Fedora 44, Clang 22.1.8, SDL 3.4.18, Mesa software Vulkan and a
 Beyond the Sword installation reporting version 3.19:
 
-* All **11 CTest cases** pass. Vulkan rendering passes under X11/Xvfb and Wayland with
+* All **12 CTest cases** pass. Vulkan rendering passes under X11/Xvfb and Wayland with
   Khronos validation layers enabled, including synthetic terrain and overlay readback.
 * A **100-turn Fractal/Standard/seed-7** game repeats exactly. A turn-50 save resumes with
   identical checksums through turn 100; the final checksum is `D7D43800`.
 * Matching three-turn graphics/headless runs agree. The menu, original Python interface,
   map and models render with the supplied assets. **Next War** runs, saves and reloads.
+* PitBoss passes two-client BtS and Next War checks, late joins/rejoins, offline timer
+  expiry, paused recovery, journal recovery after SIGKILL, authentication and invalid-order
+  rejection, and shutdown. Menu login and timed turns with diplomacy open also pass.
 * The audio scanner decodes **2,370 base-game WAV/MP3 files** with zero failures. Vulkan
   shader regeneration is reproducible with the pinned tools; the Metal generator also runs.
 
@@ -118,6 +122,10 @@ are listed under [Linux validation and limitations](#linux-validation-and-limita
 * **Mods**: Rise of Mankind: A New Dawn 2 and Chronicles of Mankind play with their own
   game cores ported to x64.
 * **Multiplayer** over the network (`--host`, `--join`), early.
+* **PitBoss on Linux** (`--pitboss CONFIG.ini`): a headless persistent server with
+  simultaneous turns, assigned password-protected seats, reconnects, a turn timer,
+  local administration and crash recovery. See [setup and operation](docs/pitboss.md).
+  This uses an OpenCiv4-only protocol over a trusted LAN/VPN.
 
 Not yet: the original's main menu (a simpler one stands in), some animations, and custom
 mod game cores on Linux and macOS. Native Linux uses SDL3's Vulkan backend; macOS uses Metal.

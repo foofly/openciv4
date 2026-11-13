@@ -22,6 +22,7 @@
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_mouse.h>
+#include <SDL3/SDL_clipboard.h>
 #include <SDL3/SDL_video.h>
 
 #include <windows.h>
@@ -137,6 +138,8 @@ namespace oc4::render
 		std::filesystem::path screenshotFolder;
 		std::vector<MapWindow::PlotClick> clicks;
 		std::vector<MapWindow::KeyPress> keys;
+		bool editing = false;
+		std::wstring characters;
 		std::vector<MapWindow::ActionButton> actions;
 		std::vector<std::array<float, 4>> actionRects; // where each was drawn
 		std::optional<int> actionClick;
@@ -391,6 +394,20 @@ namespace oc4::render
 		{
 			auto& o = view->options;
 			const auto [shift, ctrl, alt] = heldModifiers();
+			if (editing && !popup.active())
+			{
+				if (ctrl && k == 'A') characters += wchar_t(1);
+				if (ctrl && k == 'V')
+				{
+					char* clipboard = SDL_GetClipboardText();
+					if (clipboard) { characters += widen(clipboard); SDL_free(clipboard); }
+				}
+				if (k == key::Back) characters += L'\b';
+				if (k == key::Return) characters += L'\r';
+				if (k == key::Escape) characters += wchar_t(27);
+				if (k == key::Tab) characters += L'\t';
+				return;
+			}
 			// A popup takes the keys (Esc closes it, Enter is its OK).
 			if (popup.active() && !ctrl)
 			{
@@ -1421,6 +1438,8 @@ namespace oc4::render
 				if (popup.active())
 					for (const wchar_t c : widen(e.text.text))
 						popup.character(c);
+				else if (editing)
+					characters += widen(e.text.text);
 				break;
 			case SDL_EVENT_MOUSE_MOTION: onMouseMove(px(e.motion.x), px(e.motion.y)); break;
 			case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -1519,6 +1538,8 @@ namespace oc4::render
 	}
 	std::vector<MapWindow::PlotClick> MapWindow::takeClicks() { return std::exchange(m->clicks, {}); }
 	std::vector<MapWindow::KeyPress> MapWindow::takeKeys() { return std::exchange(m->keys, {}); }
+	void MapWindow::setEditing(bool editing) { m->editing = editing; }
+	std::wstring MapWindow::takeCharacters() { return std::exchange(m->characters, {}); }
 	void MapWindow::setActions(const std::vector<ActionButton>& actions)
 	{
 		if (actions == m->actions)

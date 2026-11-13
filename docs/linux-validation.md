@@ -6,8 +6,17 @@ screenshots, saves and installers are not committed.
 
 ## Verified
 
-- All 11 CTest cases pass, including mixed-case/UTF-8 assets, Steam-library
+- All 12 CTest cases pass, including mixed-case/UTF-8 assets, Steam-library
   discovery, TCP accept/welcome/disconnect, POSIX formatting and Vulkan rendering.
+- PitBoss adds authentication, assigned-seat isolation, two-client replication,
+  timer/pause arithmetic, journal replay, password rotation, kicks and roster checks.
+  The real BtS and Next War integration runs pass two clients, research/end-turn orders,
+  offline timer expiry, late joins, paused recovery and journal recovery after SIGKILL.
+  The transport test also passes AddressSanitizer and UndefinedBehaviorSanitizer.
+- Native SDL input checks cover login-field typing, select-all, backspace, Tab and
+  password masking. The menu connects to a real server and renders the game. With
+  diplomacy open, the client follows timed turns 83 through 86 without desynchronizing;
+  the dedicated-client loop continues receiving frames during local dialogs.
 - The Vulkan test draws synthetic terrain (including one-layer texture arrays),
   creates all six shader stages, and checks overlay colours and orientation through
   pixel readback. It passes under X11/Xvfb and Wayland with Khronos validation enabled.
