@@ -1,10 +1,10 @@
-﻿// oc4core: the x64 engine for the Civ4 BtS game DLL.
+// oc4core: the x64 engine for the Civ4 BtS game DLL.
 //
 //   oc4core [--civ4 <root>] [--mod <Mods\\Name> | <mod folder>] [--python-home <dir>] [--log-dir <dir>]
 //           [--turns N [--map Continents] [--size SMALL] [--players N] [--seed N]]
 //           [--load <file.CivBeyondSwordSave>] [--save <file.CivBeyondSwordSave> [--save-at TURN]]
 //           [--profile] [--profile-out <stacks.folded>] [--rand-log] [--exec <script.py>] [--exec-first <script.py>]
-//           [--menu | --view | --play [--screenshot <file.png>] [--view-size WxH] [--ui-scale PERCENT] [--show-fps] [--wasd-pan] [--look X,Y[,distance in plots]] [--keys <window keys>]
+//           [--menu | --view | --play [--screenshot <file.png>] [--view-size WxH] [--ui-scale PERCENT] [--show-fps] [--wasd-pan] [--auto-end-turn] [--no-edge-scroll] [--look X,Y[,distance in plots]] [--keys <window keys>]
 //            [--view-seconds S]]
 //           [--host PORT [--humans N] | --join HOST:PORT]
 //
@@ -38,6 +38,7 @@
 // way the original engine does. With --turns it then starts a new game on a map
 // script and lets the AI play N turns.
 
+#include "AutoEndTurn.h"
 #include "CrashHandler.h"
 #include "EngineClasses.h"
 #include "GameCoreImports.h"
@@ -142,6 +143,8 @@ namespace
 		unsigned viewWidth = 1600, viewHeight = 900;
 		bool showFps = false; // the frame rate in the corner from the start
 		bool wasdPan = false; // W A S D pan the map from the start (whatever the profile says)
+		bool autoEndTurn = false; // idle turns end by themselves from the start (the same)
+		bool noEdgeScroll = false; // the mouse at the window's edge does not scroll the map (the same)
 		int uiScale = -1; // the interface's, in percent, 0 the window's density (-1: the profile's)
 		int lookX = -1, lookY = -1;
 		float lookDistance = 9;
@@ -326,6 +329,10 @@ namespace
 				o.showFps = true;
 			else if (a == L"--wasd-pan")
 				o.wasdPan = true;
+			else if (a == L"--auto-end-turn")
+				o.autoEndTurn = true;
+			else if (a == L"--no-edge-scroll")
+				o.noEdgeScroll = true;
 			else if (a == L"--ui-scale")
 				o.uiScale = std::stoi(next().wstring());
 			else if (a == L"--plot-help")
@@ -496,8 +503,8 @@ namespace
 
 	// The way the selected units would take to a plot of the window, as the original engine
 	// draws it while the right button is held: the game core's interface pathfinder (the turn
-	// each plot is reached in is its nodes' m_iData2). The window's plots are the game core's
-	// but for a mod's viewport (host::gameCorePlot and windowPlot map them).
+	// each plot is reached in is its nodes' m_iData2). Its plots are the window's: a mod's
+	// viewport callbacks look them up in GC.getMapExternal().
 	render::MapWindow::PathView findPath(host::Interface& ui, std::pair<int, int> target)
 	{
 		render::MapWindow::PathView way;
@@ -506,8 +513,8 @@ namespace
 		const CvPlot* from = head ? head->plot() : nullptr;
 		if (!from || !group || head->getOwner() != GC.getGame().getActivePlayer())
 			return way;
-		const auto [startX, startY] = host::gameCorePlot({ from->getX(), from->getY() });
-		const auto [destX, destY] = host::gameCorePlot(target);
+		const int startX = from->getX(), startY = from->getY();
+		const auto [destX, destY] = target;
 		if (destX < 0 || (startX == destX && startY == destY))
 			return way;
 		FAStar* finder = &GC.getInterfacePathFinder();
@@ -522,10 +529,7 @@ namespace
 			return way;
 		}
 		for (const FAStarNode* n = gDLL->getFAStarIFace()->GetLastNode(finder); n; n = n->m_pParent)
-		{
-			const auto [x, y] = host::windowPlot({ n->m_iX, n->m_iY });
-			way.points.push_back({ x, y, n->m_iData2 });
-		}
+			way.points.push_back({ n->m_iX, n->m_iY, n->m_iData2 });
 		std::ranges::reverse(way.points);
 		return way;
 	}
@@ -635,6 +639,12 @@ namespace
 		if (opt.wasdPan)
 			utility.forceWasdPan();
 		window.setWasdPan(utility.wasdPan());
+		if (opt.autoEndTurn)
+			utility.forceAutoEndTurn();
+		window.setAutoEndTurn(utility.autoEndTurn());
+		if (opt.noEdgeScroll || opt.viewSeconds > 0) // (scripted runs: never)
+			utility.forceNoEdgeScroll();
+		window.setEdgeScroll(utility.edgeScroll());
 		window.setUiScale(utility.uiScale());
 		if (!opt.ownInterface && !screens.start(int(window.width()), int(window.height())))
 			std::printf("  the game's interface did not start: the host's own\n");
@@ -648,6 +658,7 @@ namespace
 			return p && i >= 0 && size_t(i) < popupItems.size() ? capture.popupHelp(*p, popupItems[size_t(i)]) : std::string();
 		});
 		auto last = Clock::now(), captured = last, ticked = last, typed = last;
+		host::AutoEndTurn autoEndTurn; // (the option: idle turns end by themselves)
 		const auto start = last;
 		long long frames = 0;
 		double longestFrame = 0; // seconds between two frames, the longest (a window that stood still)
@@ -665,6 +676,7 @@ namespace
 
 		std::vector<int> actionIds; // the action of each button the window shows
 		std::optional<std::pair<int, int>> pathShown; // where the way the window shows leads
+		std::pair<const void*, int> pathFrom{};        // (the unit it starts from and its plot: the gamepad's plot cursor shows it all the while)
 		std::tuple<const void*, const void*, int, int> coloredFor{}; // what was selected when the plots were last coloured
 		uint64_t marksShown = ~0ull; // the marks the window has
 		uint64_t globeShown = 0;      // ... and the globe's state it shows (engine.globeVersion)
@@ -672,7 +684,6 @@ namespace
 		std::vector<render::MapWindow::PlotMarks::Mark> globeMarks;
 		uint64_t greatWallShown = 0; // the Great Wall the capture has (its cities)
 		int shownCursor = -2; // the game's cursor the window has
-		window.setEdgeScroll(opt.viewSeconds <= 0);
 		window.setActionHelp([&](int i) { return i >= 0 && size_t(i) < actionIds.size() ? capture.widgetHelp(WIDGET_ACTION, actionIds[size_t(i)], -1) : std::string(); });
 		const auto held = render::keyHeld;
 		const bool log = std::getenv("OC4_PLAY_LOG") != nullptr;
@@ -720,6 +731,19 @@ namespace
 					return;
 				}
 			}
+			// The numpad's digits move the selected units a plot that way, as the original's do (its
+			// engine's own keys, no action's hotkey; the gamepad's stick flicked sends them, PadMap.h).
+			if (!k.shift && !k.ctrl && !k.alt && k.key > render::key::Numpad0 && k.key <= render::key::Numpad9 && k.key != render::key::Numpad0 + 5)
+				if (CvUnit* unit = ui.getHeadSelectedUnit())
+				{
+					const int d = int(k.key - render::key::Numpad0) - 1;
+					if (CvPlot* to = plotXY(unit->getX(), unit->getY(), d % 3 - 1, d / 3 - 1))
+					{
+						ui.unitSound(unit, true);
+						game.selectionListMove(to, false, false, false);
+					}
+					return;
+				}
 			int best = -1, bestPriority = 0;
 			utility.setModifierKeys(k.shift, k.ctrl, k.alt);
 			for (int i = 0; code >= 0 && i < GC.getNumActionInfos(); ++i)
@@ -950,6 +974,27 @@ namespace
 					}
 					if (!ui.isDiploOrPopupWaiting())
 						game.updateTestEndTurn();
+					// Ending idle turns (the option): the "press Enter" lasting, nothing up over the map.
+					const host::AutoEndTurnView idle{
+						.on = utility.autoEndTurn(),
+						.turnActive = player.isTurnActive(),
+						.endTurnMessage = ui.isEndTurnMessage(),
+						.blocked = ui.isDiploOrPopupWaiting() || ui.shownPopup() || ui.isCitySelection() || screens.menuUp() || game.isHotSeat() || game.isPbem(),
+						.turn = game.getGameTurn(),
+						.inputs = window.inputCount(),
+					};
+					if (autoEndTurn.update(idle, now))
+					{
+						if (log)
+							std::printf("  turn %d: idle, ended by itself\n", game.getGameTurn());
+						// As Enter does it, through the action: CvGame::doControl is not exported.
+						for (int i = 0; i < GC.getNumActionInfos(); ++i)
+							if (GC.getActionInfo(i).getControlType() == CONTROL_ENDTURN)
+							{
+								act(i, false, false, false);
+								break;
+							}
+					}
 					changed = true;
 				}
 			}
@@ -1144,6 +1189,7 @@ namespace
 			// The WorldBuilder: the mouse over the map is its screen's (where it is, its buttons held,
 			// its clicks: CvScreensInterface's mouseOverPlot, leftMouseDown, rightMouseDown), and the
 			// plot its brush is on outlined (WorldBuilderGetHighlightPlot); the game's clicks wait.
+			window.setWorldBuilder(ui.worldBuilder());
 			if (ui.worldBuilder())
 			{
 				namespace py = pybind11;
@@ -1181,12 +1227,34 @@ namespace
 					std::fprintf(stderr, "[oc4core] world builder: %s\n", e.what());
 				}
 			}
-			for (const auto& click : clicks)
+			for (auto click : clicks)
 			{
 				CvPlot* plot = GC.getMap().plot(click.x, click.y);
 				if (!plot)
 					continue;
 				changed = true;
+				// The gamepad's B pressed: out of an interface mode, else nothing selected any more.
+				if (click.clear)
+				{
+					if (ui.getInterfaceMode() != INTERFACEMODE_SELECTION)
+						ui.setInterfaceMode(INTERFACEMODE_SELECTION);
+					else
+						ui.clearSelectionList();
+					continue;
+				}
+				// The gamepad's plot cursor: one's own units or city there are selected, as a left click;
+				// anywhere else the selected units go there, as a right one (an interface mode's plot is a left click).
+				if (click.either)
+				{
+					const CvUnit* head = ui.getHeadSelectedUnit();
+					bool own = false;
+					for (int i = 0; i < plot->getNumUnits() && !own; ++i)
+						if (const CvUnit* u = plot->getUnitByIndex(i); u && u->getOwner() == me)
+							own = true;
+					if (const CvCity* city = plot->getPlotCity(); city && city->getOwner() == me)
+						own = true;
+					click.right = ui.getInterfaceMode() == INTERFACEMODE_SELECTION && head && !own;
+				}
 				// The interface mode wants a plot: its mission there (a right click leaves it).
 				if (const InterfaceModeTypes mode = ui.getInterfaceMode(); mode != INTERFACEMODE_SELECTION)
 				{
@@ -1245,9 +1313,12 @@ namespace
 			}
 			// The right button held: the way the selected units would take there, as the original
 			// shows it (the game core's interface pathfinder, the turns each plot is reached in).
-			if (const auto target = player.isTurnActive() ? window.pathTarget() : std::nullopt; target != pathShown)
+			const CvUnit* pathHead = ui.getHeadSelectedUnit();
+			const std::pair<const void*, int> from{ pathHead, pathHead ? pathHead->getX() * 4096 + pathHead->getY() : -1 };
+			if (const auto target = player.isTurnActive() ? window.pathTarget() : std::nullopt; target != pathShown || (target && from != pathFrom))
 			{
 				pathShown = target;
+				pathFrom = from;
 				ui.setGotoPlot(target ? GC.getMap().plot(target->first, target->second) : nullptr);
 				window.setPath(target ? findPath(ui, *target) : render::MapWindow::PathView{});
 			}
@@ -1614,6 +1685,9 @@ namespace
 		if (opt.wasdPan)
 			utility.forceWasdPan();
 		window.setWasdPan(utility.wasdPan());
+		if (opt.autoEndTurn)
+			utility.forceAutoEndTurn();
+		window.setAutoEndTurn(utility.autoEndTurn());
 		window.setUiScale(utility.uiScale());
 		if (!screens.startMenu(int(window.width()), int(window.height()), title, mapScripts, saveFolders, mods, message, opt.menuPage))
 			throw std::runtime_error("the main menu did not start");

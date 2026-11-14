@@ -31,6 +31,13 @@ patch during setup. The engine port was introduced in
 [461b1e4](https://github.com/foofly/openciv4/commit/461b1e4); the game-core fixes were introduced in
 [8b94754](https://github.com/foofly/openciv4-dll/commit/8b94754).
 
+The playable branch includes upstream engine `10de692` and game core `7eb1d6b`.
+This brings in gamepad controls, edge scrolling, optional automatic idle turns,
+minimap and terrain/forest rendering fixes, Windows-1252 XML decoding, the non-Windows
+registry shim and standard-setting fallbacks. Linux support and PitBoss are retained.
+The core also includes upstream's array-deletion, terrain guard, Python-binding and
+POSIX compatibility fixes.
+
 Start with [Building on Linux](#building-linux-x86-64). Existing Windows and macOS instructions
 are retained below. The badge above reports the upstream build; it does not certify this
 fork's Linux branch.
@@ -49,7 +56,7 @@ fork's Linux branch.
 | Networking | `Net.cpp` supplies the POSIX descriptor range to `select()`, prevents a disconnected peer from terminating Linux through SIGPIPE, clears a closed listener handle, and explicitly includes the header needed for `std::exchange`. The existing `--host`/`--join` wire protocol is unchanged. |
 | PitBoss | `Pitboss.cpp` adds the Linux dedicated server, seat authentication, ordered frames, local admin socket, timers, durable checkpoints and journal replay. `PitbossGame.cpp` adapts the SDK and validates commands; `GameSession`, `Utility` and `Net` connect server and client roles. The menu adds seat/password login and screen edit-box input. [Operator guide](docs/pitboss.md). |
 | Mods and paths | Relative `--mod` paths accept forward slashes or backslashes, while save metadata retains Windows separators. Non-Windows game-core loading rejects mods containing custom cores with a clear diagnostic. XML/Python/art mods use the linked vanilla native core. |
-| Automated tests | `linux_assets_test` covers mixed-case/UTF-8 assets, layer priority and Steam discovery. `linux_net_test` exercises TCP accept, welcome data and disconnect handling. `vulkan_smoke_test` draws synthetic terrain, exercises one-layer arrays and storage buffers, creates all shader stages, checks overlay pixels/orientation, and fails on SDL error logs. |
+| Automated tests | `linux_assets_test` covers mixed-case/UTF-8 assets, layer priority and Steam discovery. `linux_net_test` exercises TCP accept, welcome data and disconnect handling. `vulkan_smoke_test` draws synthetic terrain, exercises one-layer arrays and storage buffers, creates all shader stages and checks overlay pixels/orientation. It fails on SDL error logs; CTest also rejects Vulkan validation errors. |
 | CI and gameplay checks | The Ubuntu 24.04 job builds the engine, checks shader regeneration and runs CTest with Xvfb/Mesa Vulkan. `tools/validate_linux.py` checks repeated autoplay, save/resume, data mods, custom-core diagnostics and optional rendering/menu launch; `--reference` accepts a Windows checksum log. |
 | Repository and documentation | `.gitmodules` pins the forked game core. `.gitignore` excludes local `civ4/` assets/installers and Python caches in addition to existing build/dependency exclusions. This README and `docs/linux-validation.md` document setup, usage and validation. |
 
@@ -62,7 +69,8 @@ This fork does not introduce gameplay-rule or AI changes.
 Local validation used Fedora 44, Clang 22.1.8, SDL 3.4.18, Mesa software Vulkan and a
 Beyond the Sword installation reporting version 3.19:
 
-* All **12 CTest cases** pass. Vulkan rendering passes under X11/Xvfb and Wayland with
+* All **16 CTest cases** pass, including upstream's edge-scroll, idle-turn, gamepad and
+  XML-decoding tests. Vulkan rendering passes under X11/Xvfb and Wayland with
   Khronos validation layers enabled, including synthetic terrain and overlay readback.
 * A **100-turn Fractal/Standard/seed-7** game repeats exactly. A turn-50 save resumes with
   identical checksums through turn 100; the final checksum is `D7D43800`.
@@ -120,7 +128,8 @@ are listed under [Linux validation and limitations](#linux-validation-and-limita
 * **AI autoplay**, headless or watched, deterministic per seed; saves in the original format
   that continue exactly as if never stopped.
 * **Mods**: Rise of Mankind: A New Dawn 2 and Chronicles of Mankind play with their own
-  game cores ported to x64.
+  game cores ported to x64. BUG 4.4 runs as it is; with BULL 1.2, its game core, ported
+  ([BULL-x64](https://github.com/MortenLyhr/BULL-x64), so far built and played on macOS only).
 * **Multiplayer** over the network (`--host`, `--join`), early.
 * **PitBoss on Linux** (`--pitboss CONFIG.ini`): a headless persistent server with
   simultaneous turns, assigned password-protected seats, reconnects, a turn timer,
@@ -228,8 +237,10 @@ python3 tools/shaders/gen_spirv.py
 python3 tools/shaders/gen_spirv.py --check
 ```
 
-This builds pinned glslang, SPIRV-Tools and SPIRV-Cross locally. Also regenerate the Metal
-shaders as described below. An asset-free Vulkan pipeline/overlay test is built as
+This builds glslang, SPIRV-Tools and SPIRV-Cross from the pinned Vulkan SDK 1.4.363.0
+source tags, matching upstream's shader checks. Both generators use these local tools
+when installed. Also regenerate Metal with `python3 tools/shaders/gen_msl.py`.
+An asset-free Vulkan pipeline/overlay test is built as
 `build/linux-release/bin/vulkan_smoke_test`; enable it in CTest with `-DOC4_VULKAN_TEST=ON`.
 It requires a working display and Vulkan driver. CI runs it under Xvfb with Mesa software
 rendering. `OC4_GPU_DEBUG=1` enables GPU diagnostics. If GPU creation fails, check `vulkaninfo`
@@ -272,7 +283,8 @@ build/macos/bin/oc4core --civ4 "<Civ4>" --menu
 or Steam download). Saves and settings go to `~/Documents/My Games` as on Windows
 (`OC4_DOCUMENTS=<folder>` puts them elsewhere). The shaders' Metal versions are generated from
 the HLSL and checked in (`src/render/MslShaders.inc`); after changing a shader, run
-`python3 tools/shaders/gen_msl.py` (needs `glslang` and `spirv-cross` from Homebrew).
+`python3 tools/shaders/gen_msl.py` (needs `glslang` and `spirv-cross` from Homebrew). CI runs
+it and `gen_spirv.py` with `--check`, which fails when a checked-in file is out of date.
 
 The macOS game core plays the same games as the Windows x64 one: AI games from the same seed
 give the same sync checksums turn by turn.
@@ -321,6 +333,23 @@ next unit, D destroy) need the unit's buttons; with Shift, Ctrl or Alt they are 
 (Ctrl+S saves, Shift+D is diplomacy), and with a menu, a popup or a screen up they are letters
 there. The arrows are unchanged. The routing is `src/render/WasdPan.h`, tested by
 `tests/wasd_pan_test.cpp`.
+
+Idle turns can end by themselves, an option that is off by default. The game ends a turn alone
+only when a unit moved in it (and "Wait at End of Turn" is off); with this on, a turn waiting at
+"press Enter" also ends after 2 seconds, so with automated cities and workers the game keeps
+going until something needs you. A popup, a talk, a screen or the city screen pauses it, and a
+key or click while it waits keeps that turn; hot seat and by-email games never use it. Ctrl+Shift+E
+turns it on and off (with a note at the top), and so does "End idle turns automatically" on the
+options' Game tab; it is kept in profile.ini as `autoEndTurn`, and `--auto-end-turn` turns it on
+for one run. `OC4_PLAY_LOG=1` prints "idle, ended by itself" for each such turn. Decisions: it is
+in the engine (`apps/oc4core/AutoEndTurn.h`, called from the play loop), not the game core, so the
+game's rules, AI and saves are untouched; it sends the same end-turn control as Enter. Tested by
+`tests/auto_end_turn_test.cpp`.
+
+The mouse at the window's edge scrolls the map, as in the original; "Scroll the map at the screen
+edge" on the options' Game tab turns it off (on by default). It is kept in profile.ini as
+`edgeScroll`, and `--no-edge-scroll` turns it off for one run (scripted runs with `--view-seconds`
+never edge scroll). The rule is `src/render/EdgeScroll.h`, tested by `tests/edge_scroll_test.cpp`.
 
 The globe view's colour layers (Culture, Trade, Religion) are drawn on the globe itself.
 

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -37,7 +38,9 @@ namespace oc4::render
 #include "MslShaders.inc"
 		};
 #endif
-#ifdef __linux__
+#if defined(OC4_SPIRV_SHADERS) || defined(__linux__)
+		// Vulkan, chosen with OC4_GPU=vulkan (macOS through MoltenVK, or Windows): the same HLSL, translated
+		// ahead of time by tools/shaders/gen_spirv.py.
 		struct SpirvShader
 		{
 			const char* file;
@@ -46,6 +49,16 @@ namespace oc4::render
 			size_t size;
 		};
 #include "SpirvShaders.inc"
+
+		bool useVulkan()
+		{
+#ifdef __linux__
+			return true;
+#else
+			const char* gpu = std::getenv("OC4_GPU");
+			return gpu && std::strcmp(gpu, "vulkan") == 0;
+#endif
+		}
 #endif
 		constexpr char kShaderBody[] = R"hlsl(
 
@@ -61,7 +74,7 @@ cbuffer Object : register(b1, UNIFORMS)
 	uint flags;         // bit0 base map, bit1 alpha test, bits2-3 vertex color mode, bit4 lit, bit5 decal, bit6 team colour base, bit7 skinned, bit8 on the ground, bit11 a leader's shading
 	uint alphaFunc;
 	float alphaRef;
-	float objectPad;
+	uint treesCut;      // a forest piece (its vertices' red: the tree, 1-based): trees 1..32 by bit not drawn
 };
 
 cbuffer Bones : register(b2, UNIFORMS)
@@ -106,8 +119,10 @@ float fogAt(float2 xy)
 	[unroll] for (int i = 0; i < 4; ++i)
 	{
 		int2 q = cell + int2(i & 1, i >> 1);
-		q.x = (wrap & 1) ? (q.x % size.x + size.x) % size.x : clamp(q.x, 0, size.x - 1);
-		q.y = (wrap & 2) ? (q.y % size.y + size.y) % size.y : clamp(q.y, 0, size.y - 1);
+		// (in floats: an integer modulo is slow on some GPUs, Maxwell's among them; exact for map sizes)
+		int2 m = q - int2(float2(size) * floor((float2(q) + 0.5) / float2(size)));
+		q.x = (wrap & 1) ? m.x : clamp(q.x, 0, size.x - 1);
+		q.y = (wrap & 2) ? m.y : clamp(q.y, 0, size.y - 1);
 		const uint a = uint(round(fogPlots.Load(int3(q, 0)).a * 65535.0));
 		k[i] = float2((a & 4) ? 1 : 0, (a & 8) ? 1 : 0);
 	}
@@ -134,6 +149,7 @@ struct PSIn
 	float2 uv  : TEXCOORD0;
 	float4 col : COLOR0;
 	float3 world : TEXCOORD1;
+	float2 flat : TEXCOORD2; // the world position before the globe bends it
 };
 
 float3 xformPoint(float4 r0, float4 r1, float4 r2, float3 p) { float4 h = float4(p, 1); return float3(dot(r0, h), dot(r1, h), dot(r2, h)); }
@@ -161,12 +177,19 @@ PSIn VSMain(VSIn i)
 	if (flags & 256) // laid on the terrain (roads): heights are over it
 		p.z += groundAt(p.xy);
 	PSIn o;
+	o.flat = p.xy;
 	p = globeBend(p);
 	o.pos = mul(float4(p, 1), viewProj);
 	o.nrm = n;
 	o.uv = i.uv;
 	o.col = i.col;
 	o.world = p;
+	if (treesCut != 0)
+	{
+		const uint tree = uint(round(i.col.r * 255));
+		if (tree >= 1 && tree <= 32 && ((treesCut >> (tree - 1)) & 1))
+			o.pos = float4(0, 0, -1, 1); // (all its vertices to one point behind the near plane: nothing)
+	}
 	return o;
 }
 
@@ -187,6 +210,16 @@ bool passes(uint func, float a, float ref)
 
 float4 PSMain(PSIn i, bool front : SV_IsFrontFace) : SV_Target
 {
+	// A piece laid on the terrain (a river at the map's edge, its delta) ends where the map does.
+	// (the map: the terrain's heights grid; around the globe it wraps, and across the poles where
+	// the fog of war says so)
+	if ((flags & 256) && groundGrid.y > 0)
+	{
+		const float2 size = (groundGrid.yz - 1) / groundGrid.x;
+		const bool wrapY = fogGrid.x > 0 && (uint(fogGrid.w) & 2);
+		if ((groundGrid.w <= 0 && (i.flat.x < 0 || i.flat.x > size.x)) || (!wrapY && (i.flat.y < 0 || i.flat.y > size.y)))
+			discard;
+	}
 	float3 n = normalize(i.nrm);
 	if (!front)
 		n = -n;
@@ -325,7 +358,7 @@ float4 PSOverlay(Out p) : SV_Target
 			uint32_t flags;
 			uint32_t alphaFunc;
 			float alphaRef;
-			float pad;
+			uint32_t treesCut;
 		};
 
 		struct OverlayConstants
@@ -419,18 +452,20 @@ float4 PSOverlay(Out p) : SV_Target
 		// (the GPU devices are the video subsystem's, with a window or without)
 		if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
 			fail("SDL_InitSubSystem");
+#if defined(OC4_SPIRV_SHADERS) || defined(__linux__)
+		if (useVulkan())
+			m_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, debug, "vulkan");
+		else
+#endif
 #ifdef __APPLE__
 		m_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_MSL, debug, nullptr);
-#elif defined(__linux__)
-		m_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, debug, "vulkan");
 #else
 		m_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_DXBC, debug, nullptr);
 #endif
 		if (!m_device)
-#ifdef __linux__
-			fail("SDL_CreateGPUDevice (Linux requires a Vulkan driver; check vulkaninfo)");
-#else
 			fail("SDL_CreateGPUDevice");
+#if defined(OC4_SPIRV_SHADERS) || defined(__linux__)
+		std::printf("  GPU driver: %s\n", SDL_GetGPUDeviceDriver(m_device));
 #endif
 		if (m_window && !SDL_ClaimWindowForGPUDevice(m_device, m_window))
 			fail("SDL_ClaimWindowForGPUDevice");
@@ -506,6 +541,32 @@ float4 PSOverlay(Out p) : SV_Target
 	SDL_GPUShader* Renderer::compile(std::string_view source, const char* name, const char* entry, SDL_GPUShaderStage stage, uint32_t samplers,
 		uint32_t storageBuffers, uint32_t uniformBuffers) const
 	{
+#if defined(OC4_SPIRV_SHADERS) || defined(__linux__)
+		if (useVulkan())
+		{
+			(void)source;
+			const SpirvShader* spirv = nullptr;
+			for (const SpirvShader& candidate : kSpirvShaders)
+				if (std::strcmp(candidate.file, name) == 0 && std::strcmp(candidate.entry, entry) == 0)
+					spirv = &candidate;
+			if (!spirv)
+				throw std::runtime_error(std::format("{} {}: no SPIR-V translation (run tools/shaders/gen_spirv.py)", name, entry));
+			SDL_GPUShaderCreateInfo ci{};
+			ci.code = reinterpret_cast<const Uint8*>(spirv->code);
+			ci.code_size = spirv->size;
+			ci.entrypoint = entry;
+			ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
+			ci.stage = stage;
+			ci.num_samplers = samplers;
+			ci.num_storage_buffers = storageBuffers;
+			ci.num_uniform_buffers = uniformBuffers;
+			SDL_GPUShader* shader = SDL_CreateGPUShader(m_device, &ci);
+			if (!shader)
+				throw std::runtime_error(std::format("{} {}: {}", name, entry, SDL_GetError()));
+			return shader;
+		}
+#endif
+#if defined(__APPLE__) || defined(_WIN32)
 #ifdef __APPLE__
 		// Metal: the same HLSL, translated ahead of time by tools/shaders/gen_msl.py.
 		(void)source;
@@ -520,19 +581,6 @@ float4 PSOverlay(Out p) : SV_Target
 		ci.code_size = std::strlen(msl->source);
 		ci.entrypoint = entry;
 		ci.format = SDL_GPU_SHADERFORMAT_MSL;
-#elif defined(__linux__)
-		(void)source;
-		const SpirvShader* spirv = nullptr;
-		for (const auto& candidate : kSpirvShaders)
-			if (std::strcmp(candidate.file, name) == 0 && std::strcmp(candidate.entry, entry) == 0)
-				spirv = &candidate;
-		if (!spirv)
-			throw std::runtime_error(std::format("{} {}: no Vulkan translation (run tools/shaders/gen_spirv.py)", name, entry));
-		SDL_GPUShaderCreateInfo ci{};
-		ci.code = reinterpret_cast<const Uint8*>(spirv->code);
-		ci.code_size = spirv->size;
-		ci.entrypoint = "main";
-		ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
 #else
 		const bool vertex = stage == SDL_GPU_SHADERSTAGE_VERTEX;
 		const D3D_SHADER_MACRO defines[] = { { "UNIFORMS", vertex ? "space1" : "space3" }, { nullptr, nullptr } };
@@ -554,6 +602,9 @@ float4 PSOverlay(Out p) : SV_Target
 		if (!shader)
 			throw std::runtime_error(std::format("{} {}: {}", name, entry, SDL_GetError()));
 		return shader;
+#else
+		throw std::runtime_error("Vulkan shader path unavailable");
+#endif
 	}
 
 	void Renderer::createPipelines()
@@ -989,6 +1040,7 @@ float4 PSOverlay(Out p) : SV_Target
 			(m_inView && m_viewOnNothing && !m.alphaBlend ? 1024u : 0u) | (mesh.leader[0] ? 2048u : 0u);
 		oc.alphaFunc = static_cast<uint32_t>(m.alphaFunc);
 		oc.alphaRef = m.alphaRef;
+		oc.treesCut = m.treesCut;
 		SDL_PushGPUVertexUniformData(m_cmd, 1, &oc, sizeof(oc));
 		SDL_PushGPUFragmentUniformData(m_cmd, 1, &oc, sizeof(oc));
 		if (mesh.skinned)
@@ -1084,6 +1136,10 @@ float4 PSOverlay(Out p) : SV_Target
 			return !m.bones.empty() && size_t(m.bones[0]) < world.size() ? world[size_t(m.bones[0])].translation : m.bindCenter;
 		};
 		size_t deferredWorld = SIZE_MAX;
+		// A piece laid on the ground (a river's water and its rapids over it, a road) is drawn in
+		// its own order, all at one distance: by each mesh's own centre a river's rapids came
+		// before its water whenever they lay beyond it, and the water hid them.
+		float groundDistance = -1;
 		for (size_t i = 0; i < model.m_meshes.size(); ++i)
 		{
 			const GpuModel::Mesh& mesh = model.m_meshes[i];
@@ -1102,7 +1158,9 @@ float4 PSOverlay(Out p) : SV_Target
 				deferredWorld = m_deferredWorlds.size();
 				m_deferredWorlds.emplace_back(world.begin(), world.end());
 			}
-			m_deferred.push_back({ length(centerOf(mesh) - eye), &mesh, deferredWorld, m_deferredMaterials.size(), teamColor, onGround });
+			if (onGround && groundDistance < 0)
+				groundDistance = length(centerOf(mesh) - eye);
+			m_deferred.push_back({ onGround ? groundDistance : length(centerOf(mesh) - eye), &mesh, deferredWorld, m_deferredMaterials.size(), teamColor, onGround });
 			m_deferredMaterials.push_back(material);
 		}
 	}
@@ -1131,7 +1189,7 @@ float4 PSOverlay(Out p) : SV_Target
 				m_particleVb = createBuffer(SDL_GPU_BUFFERUSAGE_VERTEX, nullptr, std::max(bytes * 2, 256u * 1024));
 			upload(m_particleVb->buffer, 0, particles.data(), bytes);
 		}
-		std::ranges::sort(m_deferred, std::greater<>(), &Deferred::distance);
+		std::ranges::stable_sort(m_deferred, std::greater<>(), &Deferred::distance);
 		for (const auto& d : m_deferred)
 			drawMesh(*d.mesh, m_deferredMaterials[d.material], m_deferredWorlds[d.world], d.teamColor, d.onGround);
 		m_deferred.clear();

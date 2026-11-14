@@ -6,6 +6,7 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <format>
 
 namespace oc4::scene
@@ -328,6 +329,38 @@ namespace oc4::scene
 			// leaderheads' are in their NIFs and beside them).
 			static bool named(const NiSourceTexture& src) { return !src.fileName.empty(); }
 
+			// A forest piece: its text holds "OFFSETCOUNT = n", and the red of its vertices' colour
+			// numbers its trees (that text's "OFFSETi = x,y" lines are not always in that order).
+			const NiStringExtraData* treeText(const NiGeometry& geom) const
+			{
+				for (const Ref e : geom.extraData)
+					if (const auto* s = m_file.get<NiStringExtraData>(e); s && s->value.contains("OFFSETCOUNT"))
+						return s;
+				return nullptr;
+			}
+
+			// Where each tree of a forest piece stands: the middle of its vertices (tree i at
+			// [i - 1], the first 32; none: not a number).
+			static std::vector<Vec2> treePositions(const std::vector<Vertex>& vertices)
+			{
+				std::array<double, 32> x{}, y{}, n{};
+				for (const Vertex& v : vertices)
+					if (const uint32_t tree = v.color & 0xFF; tree >= 1 && tree <= 32)
+					{
+						x[tree - 1] += v.position.x;
+						y[tree - 1] += v.position.y;
+						n[tree - 1] += 1;
+					}
+				std::vector<Vec2> trees;
+				for (size_t t = 0; t < 32; ++t)
+					if (n[t] > 0)
+					{
+						trees.resize(t + 1, Vec2{ std::nanf(""), std::nanf("") });
+						trees[t] = { float(x[t] / n[t]), float(y[t] / n[t]) };
+					}
+				return trees;
+			}
+
 			Material makeMaterial(const NiGeometry& geom, const PropertyState& p, uint32_t& uvSet)
 			{
 				Material m;
@@ -382,7 +415,9 @@ namespace oc4::scene
 					m.alphaFunc = static_cast<Compare>(p.alpha->testFunc());
 					m.alphaRef = p.alpha->threshold;
 				}
-				if (p.vertexColor)
+				// A forest piece numbers each tree's vertices in the red of their colour (green and
+				// blue 1): no colour, the game's trees keep the texture's own.
+				if (p.vertexColor && !treeText(geom))
 				{
 					m.vertexColorMode = p.vertexColor->vertexMode;
 					m.lightingMode = p.vertexColor->lightingMode;
@@ -392,6 +427,11 @@ namespace oc4::scene
 					m.zTest = p.zbuffer->testEnabled();
 					m.zWrite = p.zbuffer->writeEnabled();
 				}
+				// An additive layer (One, One: the rivers' rapids, glows) only adds light, in any
+				// order: its depth would hide what is drawn under it after it (a river's water, the
+				// sea at its mouth), as the blended meshes go by their distance from the eye.
+				if (m.alphaBlend && m.srcBlend == Blend::One && m.dstBlend == Blend::One)
+					m.zWrite = false;
 				if (p.stencil)
 					m.cull = p.stencil->drawMode == 3 ? Cull::None : p.stencil->drawMode == 2 ? Cull::Front : Cull::Back;
 				// The leaderheads' skin shaders (TLeaderheadShader*) draw it opaque: the alpha of
@@ -516,6 +556,8 @@ namespace oc4::scene
 						}
 					item.bindBounds.add(p);
 				}
+				if (treeText(geom))
+					item.trees = treePositions(item.vertices);
 				m_model.items.push_back(std::move(item));
 			}
 

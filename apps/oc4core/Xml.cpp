@@ -1,4 +1,5 @@
 ﻿#include "Xml.h"
+#include "XmlDecode.h"
 
 #include <cstdio>
 #include <cstring>
@@ -77,17 +78,7 @@ namespace oc4::host
 			}
 
 			// Decodes one character of the document encoding.
-			wchar_t decodeChar()
-			{
-				const unsigned char c = m_data[m_pos++];
-				if (!m_utf8 || c < 0x80)
-					return c;
-				int extra = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
-				uint32_t cp = c & (0x3F >> extra);
-				while (extra-- > 0 && !atEnd())
-					cp = (cp << 6) | (m_data[m_pos++] & 0x3F);
-				return cp > 0xFFFF ? L'?' : static_cast<wchar_t>(cp);
-			}
+			wchar_t decodeChar() { return decodeXmlChar(m_data, m_size, m_pos, m_utf8); }
 
 			std::string name()
 			{
@@ -299,11 +290,11 @@ namespace oc4::host
 
 		std::string narrow(const std::wstring& w)
 		{
-			// The DLL's narrow strings are Windows-1252; Civ4 text is Latin-1 compatible.
+			// The DLL's narrow strings are Windows-1252.
 			std::string s;
 			s.reserve(w.size());
 			for (wchar_t c : w)
-				s.push_back(c < 256 ? static_cast<char>(c) : '?');
+				s.push_back(wideToWindows1252(c));
 			return s;
 		}
 

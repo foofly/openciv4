@@ -6,8 +6,9 @@ screenshots, saves and installers are not committed.
 
 ## Verified
 
-- All 12 CTest cases pass, including mixed-case/UTF-8 assets, Steam-library
+- All 16 CTest cases pass, including mixed-case/UTF-8 assets, Steam-library
   discovery, TCP accept/welcome/disconnect, POSIX formatting and Vulkan rendering.
+  The upstream merge adds edge-scroll, idle-turn, gamepad and XML-decoding checks.
 - PitBoss adds authentication, assigned-seat isolation, two-client replication,
   timer/pause arithmetic, journal replay, password rotation, kicks and roster checks.
   The real BtS and Next War integration runs pass two clients, research/end-turn orders,
@@ -27,8 +28,8 @@ screenshots, saves and installers are not committed.
 - Next War runs, saves and reloads. Both slash styles are accepted for its relative
   mod path. Rhye's and Fall and The Road to War receive the custom-core diagnostic.
 - The audio scanner decodes 2,370 base-game WAV/MP3 files, with zero failures.
-- Vulkan shader regeneration matches the checked-in bytes using the pinned tools.
-  The existing Metal generator also runs; its checked-in output is unchanged.
+- Vulkan and Metal shader regeneration match the checked-in files using tools built
+  from Vulkan SDK 1.4.363.0 source tags, matching upstream's shader CI.
 - The Linux compatibility fixes are committed in the forked game core and pinned
   by the engine's submodule; dependency setup does not modify game-core sources.
 
@@ -64,3 +65,7 @@ outside this port's scope.
 Game-core changes are committed separately in `foofly/openciv4-dll` on `linux-port`.
 The engine pins that commit through its submodule, so recursive clones include the
 compatibility fixes without a setup-time patch.
+
+The current playable branch includes upstream engine `10de692` and core `7eb1d6b`.
+The merge retains the Linux runtime and PitBoss changes. Both client and server need
+the updated core; older PitBoss checkpoints require their matching old build.

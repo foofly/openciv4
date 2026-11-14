@@ -10,6 +10,11 @@ this Linux feature build, the same game-core revision and identical XML/Python r
 and map scripts. Original BtS clients cannot connect. The vanilla BtS 3.19 core and
 data mods such as Next War are supported; custom C++ cores remain unsupported.
 
+Updating the pinned game core changes the compatibility fingerprint. Update clients
+and server together. Checkpoints from an older core revision cannot be resumed with
+the new build; keep the matching old build for that game's state directory. There is
+currently no checkpoint migration between core revisions.
+
 ## Start a game
 
 Build using the [Linux instructions](../README.md#building-linux-x86-64). Each machine

@@ -23,10 +23,12 @@ PACKAGES = [
     ("freetype-2.13.3.tar.gz", "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz", "5c3a8e78f7b24c20b25b54ee575d6daa40007a5f4eea2845861c3409b3021747", "freetype-2.13.3"),
     ("DirectXMath.tar.gz", "https://codeload.github.com/microsoft/DirectXMath/tar.gz/refs/tags/oct2024", "69af50e165e8458b0422068cff24dbdaf7d649c3174f140acbb71c39f3c93716", "DirectXMath-oct2024"),
 ]
-SPIRV_CROSS = ("spirv-cross.tar.gz", "https://codeload.github.com/KhronosGroup/SPIRV-Cross/tar.gz/refs/tags/vulkan-sdk-1.4.341.0", "b2665ac9ddb65ff75a7ca2f6d410e73da443692742a1e3a5b7728ca6069a400c", "SPIRV-Cross-vulkan-sdk-1.4.341.0")
-GLSLANG = ("glslang-16.2.0.tar.gz", "https://codeload.github.com/KhronosGroup/glslang/tar.gz/refs/tags/16.2.0", "01985335785c97906a91afe3cb5ee015997696181ec6c125bab5555602ba08e2", "glslang-16.2.0")
-SPIRV_TOOLS = ("SPIRV-Tools.tar.gz", "https://codeload.github.com/KhronosGroup/SPIRV-Tools/tar.gz/fbe4f3ad913c44fe8700545f8ffe35d1382b7093", "cabb35f4eef0da3ef72ad9edd596af4191d7507a8f35c05df526d2d5ff889f59", "SPIRV-Tools-fbe4f3ad913c44fe8700545f8ffe35d1382b7093")
-SPIRV_HEADERS = ("SPIRV-Headers.tar.gz", "https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/04f10f650d514df88b76d25e83db360142c7b174", "1b220e3eec1714f0451b0e3652979bd280edf10893f617837b88e6359a804ded", "SPIRV-Headers-04f10f650d514df88b76d25e83db360142c7b174")
+# Match the Vulkan SDK used by the upstream shader CI.
+SHADER_SDK = "1.4.363.0"
+SPIRV_CROSS = (f"SPIRV-Cross-vulkan-sdk-{SHADER_SDK}.tar.gz", f"https://codeload.github.com/KhronosGroup/SPIRV-Cross/tar.gz/refs/tags/vulkan-sdk-{SHADER_SDK}", "f708982e88b763ef5b0394ed468fc2c3628f68cdab89f2e7a946cd628c04e721", f"SPIRV-Cross-vulkan-sdk-{SHADER_SDK}")
+GLSLANG = (f"glslang-vulkan-sdk-{SHADER_SDK}.tar.gz", f"https://codeload.github.com/KhronosGroup/glslang/tar.gz/refs/tags/vulkan-sdk-{SHADER_SDK}", "cda24ec765e6d2845d106b7caa593f34127195a88524cf87821ff0088fb6edec", f"glslang-vulkan-sdk-{SHADER_SDK}")
+SPIRV_TOOLS = (f"SPIRV-Tools-vulkan-sdk-{SHADER_SDK}.tar.gz", f"https://codeload.github.com/KhronosGroup/SPIRV-Tools/tar.gz/refs/tags/vulkan-sdk-{SHADER_SDK}", "e6c83a215538fbfd265ccf398d3877985055df1273dbed73912bd05307664688", f"SPIRV-Tools-vulkan-sdk-{SHADER_SDK}")
+SPIRV_HEADERS = (f"SPIRV-Headers-vulkan-sdk-{SHADER_SDK}.tar.gz", f"https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/refs/tags/vulkan-sdk-{SHADER_SDK}", "5b3a0d099f5c7649e29c0938476c462e71d66ad89a0bde42fa1ba3eb476956c9", f"SPIRV-Headers-vulkan-sdk-{SHADER_SDK}")
 
 
 def download(name, url, digest):
@@ -87,7 +89,7 @@ def main():
         (prefix / ".oc4-complete").touch()
     if args.shader_tools:
         source = unpack(SPIRV_CROSS)
-        build = EXTERNAL / "spirv-cross-build"
+        build = EXTERNAL / f"spirv-cross-{SHADER_SDK}-build"
         run("cmake", "-S", source, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DSPIRV_CROSS_ENABLE_TESTS=OFF")
         run("cmake", "--build", build, "--target", "spirv-cross", "--parallel", args.jobs)
         source = unpack(GLSLANG)
@@ -96,10 +98,10 @@ def main():
         for link, target in [(source / "External/spirv-tools", tools), (tools / "external/spirv-headers", headers)]:
             if not link.exists():
                 link.symlink_to(target, target_is_directory=True)
-        build = EXTERNAL / "glslang-build"
+        build = EXTERNAL / f"glslang-{SHADER_SDK}-build"
         run("cmake", "-S", source, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_TESTING=OFF",
             "-DGLSLANG_TESTS=OFF", "-DSPIRV_SKIP_TESTS=ON", "-DSPIRV_WERROR=OFF")
-        run("cmake", "--build", build, "--target", "glslang-standalone", "spirv-val", "--parallel", args.jobs)
+        run("cmake", "--build", build, "--target", "glslang-standalone", "spirv-val", "spirv-opt", "--parallel", args.jobs)
     print("Dependencies ready. Next: cmake --preset linux-release", flush=True)
 
 
