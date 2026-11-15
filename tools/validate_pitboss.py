@@ -23,7 +23,11 @@ def main():
     parser.add_argument("--build", type=Path, default=ROOT / "build/linux-release")
     parser.add_argument("--out", type=Path, default=ROOT / "build/pitboss-validation")
     parser.add_argument("--mod", default="")
+    parser.add_argument("--soak-seconds", type=int, default=10,
+                        help="Run the initial two connected clients for 10..3600 seconds")
     args = parser.parse_args()
+    if not 10 <= args.soak_seconds <= 3600:
+        parser.error("--soak-seconds must be between 10 and 3600")
     exe = args.build.resolve() / "bin/oc4core"
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -98,7 +102,7 @@ size=WORLDSIZE_DUEL
             return launch(name, arguments)
 
         def passed(name, process, expected=0):
-            code = process.wait(timeout=60)
+            code = process.wait(timeout=max(60, args.soak_seconds + 30))
             text = (out / (name + ".log")).read_text(errors="replace")
             if code != expected or "Traceback (most recent call last)" in text:
                 raise RuntimeError("Validation failed: " + str(out / (name + ".log")))
@@ -118,10 +122,11 @@ size=WORLDSIZE_DUEL
             script.write_text("from CvPythonExtensions import *\n"
                               "CyMessageControl().sendResearch(CyGlobalContext().getInfoTypeForString('TECH_MINING'), False)\n"
                               "CyMessageControl().sendTurnComplete()\n")
-            first = client("client0", 0, 10, script)
-            second = client("client1", 1, 10, script)
+            first = client("client0", 0, args.soak_seconds, script)
+            second = client("client1", 1, args.soak_seconds, script)
             passed("client0", first)
             passed("client1", second)
+            results["connected_soak_seconds"] = args.soak_seconds
             before = status()
             time.sleep(5)
             after = status()

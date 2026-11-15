@@ -1,5 +1,6 @@
 # OpenCiv4 (Linux fork)
 
+[![fork build](https://github.com/foofly/openciv4/actions/workflows/build.yml/badge.svg?branch=linux-port)](https://github.com/foofly/openciv4/actions/workflows/build.yml?query=branch%3Alinux-port)
 [![upstream build](https://github.com/bssth/openciv4/actions/workflows/build.yml/badge.svg)](https://github.com/bssth/openciv4/actions/workflows/build.yml)
 [![Status](https://img.shields.io/badge/status-alpha-orange)]()
 ![MIU](https://img.shields.io/badge/made_in-Ukraine-ffd700?labelColor=0057b7)
@@ -39,15 +40,15 @@ The core also includes upstream's array-deletion, terrain guard, Python-binding 
 POSIX compatibility fixes.
 
 Start with [Building on Linux](#building-linux-x86-64). Existing Windows and macOS instructions
-are retained below. The badge above reports the upstream build; it does not certify this
-fork's Linux branch.
+are retained below. The fork build badge tracks `linux-port`; the upstream badge tracks
+the original project.
 
 ### Changes from upstream
 
 | Area | Code changes and resulting behavior |
 |---|---|
 | Build configuration | `CMakePresets.json` adds Clang/Ninja Linux Release and Debug presets. CMake links the POSIX loader library and OpenSSL Crypto, uses the target's actual game-core filename, and discovers optional FFmpeg through pkg-config. |
-| Dependency setup | `tools/setup_linux.py` downloads sources with pinned SHA-256 hashes and builds a private shared Python 2.7.18. It supplies pybind11, SDL3, FreeType, zlib, DirectXMath and dr_mp3, with optional pinned shader tools. System Python is unchanged. |
+| Dependency setup | `tools/setup_linux.py` downloads sources with pinned SHA-256 hashes and builds a private shared UCS-4 Python 2.7.18. Its completion marker records that configuration, so an older cache is rebuilt. It supplies pybind11, SDL3, FreeType, zlib, DirectXMath and dr_mp3, with optional pinned shader tools. System Python is unchanged. |
 | Vulkan shaders | `tools/shaders/gen_spirv.py` translates the existing HLSL for all six model, overlay and terrain stages. It combines image samplers, restores SDL descriptor sets, preserves the terrain uniform layout, validates SPIR-V, and supports `--check` for stale generated output. `SpirvShaders.inc` embeds the results, so normal builds need no shader compiler. |
 | Renderer | `Renderer.cpp` selects SDL's Vulkan/SPIR-V path on Linux and reports Vulkan initialization failures. The existing Windows DXBC and macOS Metal paths remain. `Renderer::createTexture()` gains an explicit array option; terrain atlases, details and decals retain array views even when they have only one layer. |
 | Asset lookup | `AssetResolver` indexes normalized loose-file keys while retaining actual filesystem spelling. Mixed-case paths work on case-sensitive filesystems; mod/expansion/base priority and loose-file precedence over archives are preserved. The same index serves asset listings used by XML and Python loading. |
@@ -57,6 +58,7 @@ fork's Linux branch.
 | PitBoss | `Pitboss.cpp` adds the Linux dedicated server, seat authentication, ordered frames, local admin socket, timers, durable checkpoints and journal replay. `PitbossGame.cpp` adapts the SDK and validates commands; `GameSession`, `Utility` and `Net` connect server and client roles. The menu adds seat/password login and screen edit-box input. [Operator guide](docs/pitboss.md). |
 | Mods and paths | Relative `--mod` paths accept forward slashes or backslashes, while save metadata retains Windows separators. Non-Windows game-core loading rejects mods containing custom cores with a clear diagnostic. XML/Python/art mods use the linked vanilla native core. |
 | Automated tests | `linux_assets_test` covers mixed-case/UTF-8 assets, layer priority and Steam discovery. `linux_net_test` exercises TCP accept, welcome data and disconnect handling. `vulkan_smoke_test` draws synthetic terrain, exercises one-layer arrays and storage buffers, creates all shader stages and checks overlay pixels/orientation. It fails on SDL error logs; CTest also rejects Vulkan validation errors. |
+| Portable regression checks | `asset_paths_test` checks mixed-case/backslash/UTF-8 paths and layer precedence using filesystem identity. `save_file_test` checks synthetic save round trips, known MD5 values, compressed chunk boundaries and truncated input. Neither needs game assets. |
 | CI and gameplay checks | The Ubuntu 24.04 job builds the engine, checks shader regeneration and runs CTest with Xvfb/Mesa Vulkan. `tools/validate_linux.py` checks repeated autoplay, save/resume, data mods, custom-core diagnostics and optional rendering/menu launch; `--reference` accepts a Windows checksum log. |
 | Repository and documentation | `.gitmodules` pins the forked game core. `.gitignore` excludes local `civ4/` assets/installers and Python caches in addition to existing build/dependency exclusions. This README and `docs/linux-validation.md` document setup, usage and validation. |
 
@@ -66,27 +68,37 @@ This fork does not introduce gameplay-rule or AI changes.
 
 ### Linux validation and limitations
 
-Local validation used Fedora 44, Clang 22.1.8, SDL 3.4.18, Mesa software Vulkan and a
-Beyond the Sword installation reporting version 3.19:
+Local validation used Fedora 44, Clang 22.1.8, SDL 3.4.18, Mesa software Vulkan,
+Intel Iris Xe hardware Vulkan and a Beyond the Sword installation reporting version 3.19:
 
-* All **16 CTest cases** pass, including upstream's edge-scroll, idle-turn, gamepad and
-  XML-decoding tests. Vulkan rendering passes under X11/Xvfb and Wayland with
+* All **18 CTest cases** pass, including portable asset/save checks and upstream's
+  edge-scroll, idle-turn, gamepad and XML-decoding tests. Vulkan rendering passes under X11/Xvfb and Wayland with
   Khronos validation layers enabled, including synthetic terrain and overlay readback.
 * A **100-turn Fractal/Standard/seed-7** game repeats exactly. A turn-50 save resumes with
   identical checksums through turn 100; the final checksum is `D7D43800`.
+* A **500-turn** run matches every pre-update checksum and repeats exactly. Both the
+  old and new turn-250 saves resume identically; the final checksum is `2D59DB00`.
 * Matching three-turn graphics/headless runs agree. The menu, original Python interface,
   map and models render with the supplied assets. **Next War** runs, saves and reloads.
 * PitBoss passes two-client BtS and Next War checks, late joins/rejoins, offline timer
   expiry, paused recovery, journal recovery after SIGKILL, authentication and invalid-order
   rejection, and shutdown. Menu login and timed turns with diplomacy open also pass.
+  A three-minute connected soak keeps both clients synchronized through turn 41.
+* Intel Iris Xe with Mesa 26.2.6 passes terrain/overlay readback, owned-game rendering
+  and menu launch on native Wayland with Khronos validation enabled. Xvfb uses software
+  Vulkan; its virtual display does not provide the DRI3 support needed by this Intel driver.
 * The audio scanner decodes **2,370 base-game WAV/MP3 files** with zero failures. Vulkan
   shader regeneration is reproducible with the pinned tools; the Metal generator also runs.
 
-Hardware GPU drivers, physical audio output, a full manual playthrough, optional FFmpeg
-movies, a Windows checksum reference and an original-game save fixture still need validation.
-Native Windows/macOS builds and the new Ubuntu CI job have not been run for this fork.
-The workflow includes manual dispatch; its push filter targets `master` and version tags,
-so ordinary `linux-port` pushes do not start CI.
+Other hardware GPU drivers, physical audio output, a full manual playthrough, optional
+FFmpeg movies, a Windows checksum reference and an original-game save fixture still need
+validation. Native macOS validation also remains outstanding; the fork workflow reports
+Windows and Ubuntu build/test results.
+The full build workflow runs on `linux-port` and `master` pushes, pull requests, version
+tags and manual dispatch. It builds Linux and Windows, checks shader generation and
+runs asset-free tests; Linux includes Xvfb/Mesa Vulkan validation. New pushes cancel
+older runs for the same branch. Publishing the same commit on `feature/pitboss` does
+not duplicate the full build; the `linux-port` run covers the playable commit.
 Custom C++ mod cores, Linux ARM64, Steam Deck certification and Linux release packages are
 outside the initial port. See the [validation report](docs/linux-validation.md) for commands
 and remaining checks.
@@ -183,7 +195,7 @@ Clang, CMake 3.28+, Ninja and Python 3.12+ are required. Ubuntu 24.04 prerequisi
 
 ```sh
 sudo apt-get install git cmake clang ninja-build pkg-config build-essential python3-dev libssl-dev libffi-dev zlib1g-dev \
-  libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxext-dev \
+  libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxfixes-dev libxext-dev libxtst-dev \
   libwayland-dev wayland-protocols libxkbcommon-dev libasound2-dev libpulse-dev libdecor-0-dev \
   libvulkan-dev mesa-vulkan-drivers fonts-dejavu-core
 ```
@@ -192,7 +204,7 @@ On Fedora:
 
 ```sh
 sudo dnf install git clang cmake ninja-build pkgconf-pkg-config gcc gcc-c++ make python3-devel openssl-devel libffi-devel zlib-devel \
-  libX11-devel libXcursor-devel libXi-devel libXrandr-devel libXScrnSaver-devel libXfixes-devel libXext-devel \
+  libX11-devel libXcursor-devel libXi-devel libXrandr-devel libXScrnSaver-devel libXfixes-devel libXext-devel libXtst-devel \
   wayland-devel wayland-protocols-devel libxkbcommon-devel alsa-lib-devel pulseaudio-libs-devel \
   libdecor-devel vulkan-loader-devel mesa-vulkan-drivers dejavu-sans-fonts
 ```
@@ -210,8 +222,11 @@ ctest --test-dir build/linux-release --output-on-failure
 build/linux-release/bin/oc4core --civ4 "/path/to/Civ4" --menu
 ```
 
-The setup script verifies pinned source archives and builds a private shared Python 2.7.18
-under `external/python27`; it does not replace your system Python. This fork pins a game-core
+The setup script verifies pinned source archives and builds a private shared UCS-4 Python 2.7.18
+under `external/python27`; it does not replace your system Python. A configuration marker
+detects older Python caches and rebuilds them. After rerunning setup on an older checkout,
+rerun CMake and rebuild the engine/core against the updated Python headers and library.
+This fork pins a game-core
 commit containing the case-sensitive include and POSIX formatting fixes. Debug builds use the
 `linux-debug` preset. FFmpeg is optional: install development packages for libavcodec,
 libavformat and libavutil for movies, or set `OC4_FFMPEG_DIR` to a compatible prefix.

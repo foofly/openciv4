@@ -18,7 +18,7 @@ EXTERNAL = ROOT / "external"
 PACKAGES = [
     ("Python-2.7.18.tgz", "https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz", "da3080e3b488f648a3d7a4560ddee895284c3380b11d6de75edb986526b9a814", "Python-2.7.18"),
     ("pybind11-2.9.2.tar.gz", "https://codeload.github.com/pybind/pybind11/tar.gz/refs/tags/v2.9.2", "6bd528c4dbe2276635dc787b6b1f2e5316cf6b49ee3e150264e455a0d68d19c1", "pybind11-2.9.2"),
-    ("zlib-1.3.1.tar.gz", "https://zlib.net/fossils/zlib-1.3.1.tar.gz", "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23", "zlib-1.3.1"),
+    ("zlib-1.3.1.tar.gz", "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz", "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23", "zlib-1.3.1"),
     ("SDL3-3.4.18.tar.gz", "https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz", "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3", "SDL3-3.4.18"),
     ("freetype-2.13.3.tar.gz", "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz", "5c3a8e78f7b24c20b25b54ee575d6daa40007a5f4eea2845861c3409b3021747", "freetype-2.13.3"),
     ("DirectXMath.tar.gz", "https://codeload.github.com/microsoft/DirectXMath/tar.gz/refs/tags/oct2024", "69af50e165e8458b0422068cff24dbdaf7d649c3174f140acbb71c39f3c93716", "DirectXMath-oct2024"),
@@ -64,6 +64,8 @@ def main():
     parser.add_argument("--shader-tools", action="store_true")
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 2, 8))
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs must be positive")
     core = ROOT / "gamecore"
     if not (core / "GameCore.cmake").exists():
         raise SystemExit("Initialize the game core first: git submodule update --init")
@@ -78,15 +80,17 @@ def main():
     if not installed_mp3.exists() or installed_mp3.read_bytes() != mp3.read_bytes():
         installed_mp3.write_bytes(mp3.read_bytes())
     prefix = EXTERNAL / "python27"
-    if not (prefix / ".oc4-complete").exists():
+    marker = prefix / ".oc4-complete"
+    build_config = "Python-2.7.18 shared ucs4 gnu17 v1\n"
+    if not marker.exists() or marker.read_text() != build_config:
         build = EXTERNAL / "python27-build"
         build.mkdir(exist_ok=True)
         # Modern GCC defaults to C23, which the Python 2 sources predate.
         env = dict(os.environ, CFLAGS="-O2 -fPIC -std=gnu17", LDFLAGS="-Wl,-rpath," + str(prefix / "lib"))
-        run(EXTERNAL / "Python-2.7.18/configure", "--enable-shared", "--disable-ipv6", "--without-ensurepip", "--prefix=" + str(prefix), cwd=build, env=env)
+        run(EXTERNAL / "Python-2.7.18/configure", "--enable-shared", "--enable-unicode=ucs4", "--disable-ipv6", "--without-ensurepip", "--prefix=" + str(prefix), cwd=build, env=env)
         run("make", "-j" + str(args.jobs), cwd=build, env=env)
         run("make", "install", cwd=build, env=env)
-        (prefix / ".oc4-complete").touch()
+        marker.write_text(build_config)
     if args.shader_tools:
         source = unpack(SPIRV_CROSS)
         build = EXTERNAL / f"spirv-cross-{SHADER_SDK}-build"

@@ -162,6 +162,10 @@ Run the integration harness with your own assets:
 python3 tools/validate_pitboss.py --civ4 /path/to/Civ4
 python3 tools/validate_pitboss.py --civ4 /path/to/Civ4 \
   --mod 'Mods/Next War' --out build/pitboss-nextwar-validation
+
+# Keep both clients connected for three minutes before the recovery checks.
+python3 tools/validate_pitboss.py --civ4 /path/to/Civ4 \
+  --soak-seconds 180 --out build/pitboss-soak-validation
 ```
 
 It starts a real headless server and two SDK clients, sends research/end-turn
