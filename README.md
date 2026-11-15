@@ -15,6 +15,8 @@ and its Python scripts run as they are; openciv4 does the rest: the map, the int
 leaders, sound and music. Mods run too, including mods with a game core of their own once it
 is rebuilt for x64.
 
+Support the original developer
+
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/V7V51ZQ1RH)
 
 Discussion: [CivFanatics thread](https://forums.civfanatics.com/threads/openciv4-clean-room-x64-engine-reimplementation.705223/).
