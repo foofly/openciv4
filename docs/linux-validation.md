@@ -76,6 +76,10 @@ their respective environments or reference files. The harness accepts a Windows
 reference log through `--reference`. Available owned-install saves were OpenCiv4
 autosaves or WorldBuilder scenarios, not an original-game binary-save fixture.
 
+CI accepts both `lvp_icd.json` (current Ubuntu) and `lvp_icd.x86_64.json` (Fedora and
+older packages), verifies the selected manifest exists, and reports its path before
+running the Vulkan tests.
+
 Other hardware GPU drivers, physical audio output, a full manual playthrough and optional
 FFmpeg movie playback have not been validated locally. Custom C++ mod cores remain
 outside this port's scope.
