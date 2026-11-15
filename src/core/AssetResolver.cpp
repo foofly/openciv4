@@ -65,7 +65,8 @@ namespace oc4
 
 	void AssetResolver::addLayer(const fs::path& assetsDir)
 	{
-		Layer layer{ assetsDir, {}, {} };
+		Layer layer;
+		layer.root = assetsDir;
 		std::vector<fs::path> packs;
 		std::error_code ec;
 		for (const auto& e : fs::directory_iterator(assetsDir, ec))

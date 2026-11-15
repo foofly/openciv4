@@ -50,11 +50,11 @@ int main()
 	const auto steamGame = library / "steamapps/common/Sid Meier's Civilization IV Beyond the Sword";
 	fs::create_directories(steamGame / "Assets");
 	fs::create_directories(steamGame / "Beyond the Sword/Assets");
-	write(home / ".local/share/Steam/steamapps/libraryfolders.vdf", "\"libraryfolders\"\n{\n\"0\"\n{\n\"path\" \"" + oc4::utf8Path(library) + "\"\n}\n}\n");
-	assert(oc4::findLinuxSteamInstall(home) == steamGame);
+	write(home / ".local/share/Steam/steamapps/libraryfolders.vdf", "\"libraryfolders\"\n{\n\"0\"\n{\n\"path\" \"" + oc4::utf8GenericPath(library) + "\"\n}\n}\n");
+	assert(fs::equivalent(oc4::findLinuxSteamInstall(home), steamGame));
 	fs::remove_all(home / ".local");
 	const auto flatpakGame = home / ".var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Sid Meier's Civilization IV Beyond the Sword";
 	fs::create_directories(flatpakGame / "Assets");
 	fs::create_directories(flatpakGame / "Beyond the Sword/Assets");
-	assert(oc4::findLinuxSteamInstall(home) == flatpakGame);
+	assert(fs::equivalent(oc4::findLinuxSteamInstall(home), flatpakGame));
 }

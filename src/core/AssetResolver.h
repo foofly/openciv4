@@ -69,6 +69,12 @@ namespace oc4
 	private:
 		struct Layer
 		{
+			Layer() = default;
+			Layer(const Layer&) = delete;
+			Layer& operator=(const Layer&) = delete;
+			Layer(Layer&&) = default;
+			Layer& operator=(Layer&&) = default;
+
 			std::filesystem::path root;
 			std::vector<std::unique_ptr<FpkArchive>> archives;
 			std::map<std::string, std::filesystem::path> loose;
