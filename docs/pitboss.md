@@ -175,3 +175,30 @@ credentials and runtime saves are created in a private temporary directory.
 `--pitboss-check SECONDS` with the join options runs a headless diagnostic client
 that loads the snapshot, follows frames and verifies checksums for that duration.
 It exits unsuccessfully on disconnect or desynchronization.
+
+## Game events for bots
+
+Set `events=true` in the `[server]` section of the PitBoss INI to append UTF-8
+JSON Lines to `events.jsonl` in the private state directory. The feed is off
+by default. Run the consumer as the server user or have that user forward
+selected records to the bot. For example, `tail -n 0 -F /path/to/state/events.jsonl`
+follows new records. Read only newline-terminated records.
+
+Each record has `schema_version` (currently 1), `type`, `game_id`, `run_id`,
+`sequence`, `frame`, and `turn`. The game ID persists across recovery. The run ID
+changes on restart, and sequence numbers start at 1 for each run. Use the run
+ID and sequence together as an event key.
+
+| Type | Meaning and extra fields |
+| --- | --- |
+| `server_ready` | The server has loaded or created its game and is listening. `frame` is null. `resumed` says whether this is a recovery. `pending_seats` lists active human seat IDs. |
+| `player_turn_completed` | A living human seat finished its turn, including on timer expiry. `seat` identifies the player and `turn` is the completed turn. |
+| `turn_started` | A new turn began. `pending_seats` lists active human seat IDs. |
+| `game_result` | The game core recorded a victory. `winner_team` is the numeric team ID or null, and `victory_type` is the core's numeric victory ID. |
+
+Gameplay records give the authoritative frame number. Completions for the old
+turn precede a new-turn record in the same frame. Use the latest `server_ready`
+record to resynchronize after restart. Recovery does not replay notifications.
+The file is best effort, so a crash can leave gaps. On restart the server
+removes an incomplete final line. An output error disables recording for that
+run and appears in the server log. The file grows as events are recorded.

@@ -6,6 +6,8 @@ civ4=/path/to/Civ4
 listen=127.0.0.1
 port=2056
 turn_hours=24
+# Opt in to the local JSON Lines event feed in state_dir.
+# events=true
 # An absolute path is recommended. Relative paths are relative to this INI.
 # If omitted: $XDG_STATE_HOME/openciv4/pitboss/default, or ~/.local/state/...
 state_dir=/path/to/private/pitboss-state

@@ -50,6 +50,7 @@ mod={args.mod}
 state_dir={state}
 port={port}
 turn_hours=0.001
+events=true
 [game]
 humans=0,1
 players=3
@@ -115,6 +116,23 @@ size=WORLDSIZE_DUEL
             results[name] = "passed"
             print(name, "passed", flush=True)
 
+        event_path = state / "events.jsonl"
+
+        def read_events():
+            data = event_path.read_text(encoding="utf-8")
+            assert data.endswith("\n")
+            records = [json.loads(line) for line in data.splitlines()]
+            sequences = {}
+            for event in records:
+                run = event["run_id"]
+                assert event["schema_version"] == 1
+                assert len(run) == len(event["game_id"]) == 32
+                assert event["sequence"] == sequences.get(run, 0) + 1
+                sequences[run] = event["sequence"]
+                assert isinstance(event["turn"], int)
+                assert (event["frame"] is None) == (event["type"] == "server_ready")
+            return records
+
         try:
             server = start("server")
             # The standard Python command path reaches the authenticated seat validator.
@@ -141,8 +159,20 @@ size=WORLDSIZE_DUEL
                 raise RuntimeError("Paused game advanced")
             server.kill()
             server.wait(timeout=10)
-            time.sleep(0.3)
+            original_events = read_events()
+            assert original_events[0]["type"] == "server_ready" and not original_events[0]["resumed"]
+            assert {0, 1} <= {e["seat"] for e in original_events if e["type"] == "player_turn_completed"}
+            assert any(e["type"] == "turn_started" and e["turn"] > before["turn"] for e in original_events)
+            with event_path.open("a") as stream:
+                stream.write('{"incomplete":')
             server = start("recovered")
+            recovered_events = read_events()
+            assert recovered_events[:-1] == original_events
+            ready = recovered_events[-1]
+            assert ready["type"] == "server_ready" and ready["resumed"]
+            assert ready["game_id"] == original_events[0]["game_id"]
+            assert ready["run_id"] != original_events[0]["run_id"]
+            assert ready["turn"] == paused["turn"]
             if status() != paused:
                 raise RuntimeError("Recovery changed the paused game or consumed downtime")
             passed("recovered_client", client("recovered_client", 0, 1))
@@ -168,6 +198,60 @@ size=WORLDSIZE_DUEL
             if server.wait(timeout=30):
                 raise RuntimeError("Server shutdown failed")
             results["graceful_stop"] = "passed"
+            events = read_events()
+            assert len({e["game_id"] for e in events}) == 1
+            assert sum(e["type"] == "server_ready" for e in events) == 3
+            event_path.rename(out / "events.jsonl")
+            event_path.mkdir()
+            server = start("unusable_event_path")
+            passed("unusable_event_path_client", client("unusable_event_path_client", 0, 1))
+            initial_turn = status()["turn"]
+            until = time.monotonic() + 15
+            while status()["turn"] <= initial_turn:
+                if time.monotonic() >= until:
+                    raise RuntimeError("Turn did not advance with an unusable event path")
+                time.sleep(0.1)
+            admin("stop")
+            assert server.wait(timeout=30) == 0
+            assert (out / "unusable_event_path.log").read_text().count("PitBoss event feed disabled") == 1
+            results["event_feed"] = "passed"
+            template = config.read_text()
+            checksums = []
+            for enabled in (False, True):
+                mode = "events_on" if enabled else "events_off"
+                fresh_state = Path(private) / mode
+                config.write_text(template.replace(f"state_dir={state}", f"state_dir={fresh_state}")
+                                  .replace("events=true", f"events={str(enabled).lower()}"))
+                for seat in (0, 1):
+                    subprocess.run([str(exe), "--pitboss-password", str(fresh_state), str(seat)],
+                                   input="validation-password\n", text=True, env=env, check=True,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                server = start(mode)
+                until = time.monotonic() + 20
+                while True:
+                    log = (out / (mode + ".log")).read_text(errors="replace")
+                    matches = re.findall(r"PitBoss turn (\d+) checksum (\d+)", log)
+                    if len(matches) >= 2:
+                        checksums.append(matches[:2])
+                        break
+                    if server.poll() is not None or time.monotonic() >= until:
+                        raise RuntimeError("Deterministic timer run failed: " + mode)
+                    time.sleep(0.1)
+                assert (fresh_state / "events.jsonl").exists() == enabled
+                subprocess.run([str(exe), "--pitboss-admin", str(fresh_state), "stop"],
+                               check=True, env=env, stdout=subprocess.DEVNULL)
+                assert server.wait(timeout=30) == 0
+                if enabled:
+                    records = [json.loads(line) for line in (fresh_state / "events.jsonl").read_text().splitlines()]
+                    rollover = next(e for e in records if e["type"] == "turn_started")
+                    completions = [e for e in records if e["type"] == "player_turn_completed"
+                                   and e["turn"] == rollover["turn"] - 1]
+                    assert {e["seat"] for e in completions} == {0, 1}
+                    assert all(e["sequence"] < rollover["sequence"] for e in completions)
+                    assert completions == sorted(completions, key=lambda e: (e["frame"], e["seat"]))
+                    (out / (mode + ".jsonl")).write_text((fresh_state / "events.jsonl").read_text())
+            assert checksums[0] == checksums[1], checksums
+            results["event_feed_checksum_parity"] = "passed"
         finally:
             for process in processes:
                 if process.poll() is None:

@@ -17,6 +17,11 @@ struct FakeWorld : pb::World
 	void load(const fs::path &p) override { std::ifstream(p) >> turns >> orders; }
 	void save(const fs::path &p) override { std::ofstream(p) << turns << ' ' << orders; }
 	int turn() const override { return turns; }
+	pb::GameMilestones milestones() const override
+	{
+		using enum pb::SeatTurn;
+		return {{orders >= 84 ? Completed : Pending, orders >= 42 ? Completed : Pending}, -1, orders >= 84 ? 2 : -1};
+	}
 	uint32_t checksum() const override { return turns * 1000 + orders; }
 	bool validate(int seat, const pb::Bytes &b) const override { return (seat == 0 || seat == 1) && b == pb::Bytes{std::byte{42}}; }
 	void step(const pb::Frame &f) override
@@ -53,7 +58,7 @@ int main()
 	t.advance(9999);
 	assert(t.ticks() == -1);
 	assert(pb::credential("secret") != pb::credential("secret"));
-	const fs::path state = fs::temp_directory_path() / ("oc4-pitboss-test-" + std::to_string(getpid()));
+	fs::path state = fs::temp_directory_path() / ("oc4-pitboss-test-" + std::to_string(getpid()));
 	fs::create_directory(state);
 	struct Cleanup
 	{
@@ -106,6 +111,10 @@ int main()
 		assert(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	};
 	pid_t pid = launch();
+	assert(!fs::exists(state / "events.jsonl"));
+	stop(pid);
+	c.events = true;
+	pid = launch();
 	bool refused = false;
 	try
 	{
@@ -203,6 +212,15 @@ int main()
 		usleep(5000);
 	}
 	assert(mirror.orders == 84);
+	std::ifstream events(state / "events.jsonl");
+	std::string line;
+	assert(std::getline(events, line) && line.find("\"type\":\"server_ready\"") != std::string::npos);
+	assert(std::getline(events, line) && line.find("\"type\":\"player_turn_completed\"") != std::string::npos &&
+		line.find("\"seat\":1") != std::string::npos);
+	assert(std::getline(events, line) && line.find("\"type\":\"player_turn_completed\"") != std::string::npos &&
+		line.find("\"seat\":0") != std::string::npos);
+	assert(std::getline(events, line) && line.find("\"type\":\"game_result\"") != std::string::npos &&
+		line.find("\"winner_team\":null,\"victory_type\":2") != std::string::npos);
 	pb::disconnect();
 	// The order is only in the fsynced journal, not a checkpoint. Kill before a save.
 	std::string current;
@@ -279,5 +297,19 @@ int main()
 	assert(pb::admin(state, "resume") == "OK");
 	assert(pb::admin(state, "timer 0") == "OK");
 	stop(pid);
+	state /= "rollover";
+	c.state = state;
+	c.durationMs = 250;
+	pb::setCredential(state, 0, "secret");
+	pb::setCredential(state, 1, "other-secret");
+	pid = launch();
+	for (int i = 0; i < 500 && pb::admin(state, "status").find("turn=0 ") != std::string::npos; ++i)
+		usleep(10000);
+	stop(pid);
+	std::ifstream rollover(state / "events.jsonl");
+	assert(std::getline(rollover, line) && line.find("\"type\":\"server_ready\"") != std::string::npos);
+	assert(std::getline(rollover, line) && line.find("\"seat\":0") != std::string::npos);
+	assert(std::getline(rollover, line) && line.find("\"seat\":1") != std::string::npos);
+	assert(std::getline(rollover, line) && line.find("\"type\":\"turn_started\"") != std::string::npos);
 	puts("PitBoss authentication, occupied seats, transport, pause, journal replay, credentials, roster and shutdown passed");
 }

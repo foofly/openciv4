@@ -549,6 +549,10 @@ Config Config::read(const fs::path &file)
 	Config c;
 	c.values = readIni(file);
 	c.address = value(c.values, "server.listen", "127.0.0.1");
+	const auto events = value(c.values, "server.events", "false");
+	if (events != "true" && events != "false")
+		throw std::runtime_error("server.events must be true or false");
+	c.events = events == "true";
 	c.port = int(number(value(c.values, "server.port", "2056"), 1, 65535));
 	auto hours = value(c.values, "server.turn_hours", "24");
 	size_t used = 0;
@@ -839,6 +843,122 @@ struct Store
 	fs::path previousCheckpoint;
 	std::string runtimeState;
 };
+namespace
+{
+class EventFeed
+{
+	FD file;
+	std::string gameId, runId;
+	uint64_t sequence = 0;
+
+	void disable(const std::exception &e)
+	{
+		std::cerr << "PitBoss event feed disabled: " << e.what() << '\n';
+		if (file.fd >= 0)
+			close(file.fd);
+		file.fd = -1;
+	}
+
+	static std::string pending(const GameMilestones &state)
+	{
+		std::string seats = "[";
+		for (size_t i = 0; i < state.seats.size(); ++i)
+			if (state.seats[i] == SeatTurn::Pending)
+			{
+				if (seats.size() > 1)
+					seats += ',';
+				seats += std::to_string(i);
+			}
+		return seats + ']';
+	}
+
+	void emit(const char *type, const std::string &frame, int turn, const std::string &fields)
+	{
+		std::string line = "{\"schema_version\":1,\"type\":\"" + std::string(type) +
+			"\",\"game_id\":\"" + gameId + "\",\"run_id\":\"" + runId +
+			"\",\"sequence\":" + std::to_string(++sequence) + ",\"frame\":" + frame +
+			",\"turn\":" + std::to_string(turn) + fields + "}\n";
+		writeAll(file.fd, line.data(), line.size());
+	}
+
+public:
+	bool active() const { return file.fd >= 0; }
+
+	void start(const Store &store, const World &world, bool resumed)
+	{
+		try
+		{
+			file.fd = open((store.dir / "events.jsonl").c_str(),
+				O_RDWR | O_APPEND | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0600);
+			struct stat info {};
+			if (file.fd < 0 || fstat(file.fd, &info) || !S_ISREG(info.st_mode) || fchmod(file.fd, 0600))
+				throw std::runtime_error("cannot open private events.jsonl");
+			// A crash can interrupt the last record. Keep every complete line.
+			std::array<char, 4096> block;
+			off_t end = info.st_size;
+			while (end > 0)
+			{
+				const off_t start = std::max<off_t>(0, end - off_t(block.size()));
+				const auto length = size_t(end - start);
+				if (pread(file.fd, block.data(), length, start) != ssize_t(length))
+					throw std::runtime_error("cannot read event file tail");
+				const auto newline = std::find(std::make_reverse_iterator(block.data() + length),
+					std::make_reverse_iterator(block.data()), '\n');
+				end = start + (newline.base() - block.data());
+				if (newline.base() != block.data())
+					break;
+			}
+			if (end != info.st_size && ftruncate(file.fd, end))
+				throw std::runtime_error("cannot trim incomplete event record");
+			// The transport epoch changes on recovery and roster edits.
+			const auto identity = store.dir / "events.game-id";
+			if (resumed && fs::exists(identity))
+			{
+				FD id(open(identity.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
+				struct stat idInfo {};
+				std::array<char, 32> bytes;
+				if (id.fd < 0 || fstat(id.fd, &idInfo) || !S_ISREG(idInfo.st_mode) ||
+					idInfo.st_size != off_t(bytes.size()) ||
+					read(id.fd, bytes.data(), bytes.size()) != ssize_t(bytes.size()))
+					throw std::runtime_error("cannot read event game ID");
+				gameId.assign(bytes.data(), bytes.size());
+				if (gameId.find_first_not_of("0123456789abcdef") != std::string::npos)
+					throw std::runtime_error("invalid event game ID");
+			}
+			else
+			{
+				gameId = randomHex(16);
+				atomicText(identity, gameId);
+			}
+			runId = randomHex(16);
+			emit("server_ready", "null", world.turn(), std::string(",\"resumed\":") +
+				(resumed ? "true" : "false") + ",\"pending_seats\":" + pending(world.milestones()));
+		}
+		catch (const std::exception &e) { disable(e); }
+	}
+
+	void frame(uint32_t number, int oldTurn, const GameMilestones &before, const World &world)
+	{
+		try
+		{
+			const int turn = world.turn();
+			const auto after = world.milestones();
+			const auto frame = std::to_string(number);
+			for (size_t i = 0; i < std::min(before.seats.size(), after.seats.size()); ++i)
+				if (before.seats[i] == SeatTurn::Pending && after.seats[i] != SeatTurn::Ineligible &&
+					(after.seats[i] == SeatTurn::Completed || turn > oldTurn))
+					emit("player_turn_completed", frame, oldTurn, ",\"seat\":" + std::to_string(i));
+			if (turn > oldTurn)
+				emit("turn_started", frame, turn, ",\"pending_seats\":" + pending(after));
+			if (after.victory >= 0 && (after.victory != before.victory || after.winner != before.winner))
+				emit("game_result", frame, turn, ",\"winner_team\":" +
+					(after.winner < 0 ? "null" : std::to_string(after.winner)) +
+					",\"victory_type\":" + std::to_string(after.victory));
+		}
+		catch (const std::exception &e) { disable(e); }
+	}
+};
+}
 void serve(const Config &config, World &world)
 {
 	Store store(config);
@@ -849,8 +969,12 @@ void serve(const Config &config, World &world)
 		if (s.size() != 97 || s[32] != ':')
 			throw std::runtime_error("missing credential for seat " + std::to_string(seat));
 	}
-	if (!store.recover(world))
+	const bool resumed = store.recover(world);
+	if (!resumed)
 	{
+		// A reused directory can contain an event identity from a previous game.
+		std::error_code ignored;
+		fs::remove(store.dir / "events.game-id", ignored);
 		world.create(config);
 		store.lastTurn = world.turn();
 		store.checkpoint(world);
@@ -869,6 +993,9 @@ void serve(const Config &config, World &world)
 	if (bind(control.fd, reinterpret_cast<sockaddr *>(&addr), sizeof addr) || chmod(socketPath.c_str(), 0600) || listen(control.fd, 4))
 		throw std::runtime_error("admin listener failed");
 	nonblock(control.fd);
+	EventFeed events;
+	if (config.events)
+		events.start(store, world, resumed);
 	struct Cleanup
 	{
 		std::string path;
@@ -1221,8 +1348,12 @@ void serve(const Config &config, World &world)
 			f.connected = rosterMask();
 			f.remainingTicks = store.timer.ticks();
 			f.orders.swap(pending);
+			const int oldTurn = world.turn();
+			const auto before = events.active() ? world.milestones() : GameMilestones{};
 			store.append(f);
 			world.step(f);
+			if (events.active())
+				events.frame(f.number, oldTurn, before, world);
 			for (auto &o : f.orders)
 				store.sequences[o.seat] = o.sequence;
 			checks[f.number] = world.checksum();

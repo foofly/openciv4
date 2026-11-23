@@ -22,6 +22,7 @@ struct Config
 	std::filesystem::path state;
 	std::string address = "127.0.0.1";
 	int port = 2056;
+	bool events = false;
 	int64_t durationMs = 86400000;
 	std::vector<int> humans;
 	static Config read(const std::filesystem::path &file);
@@ -38,6 +39,12 @@ struct Frame
 	};
 	std::vector<Order> orders;
 };
+enum class SeatTurn { Ineligible, Pending, Completed };
+struct GameMilestones
+{
+	std::vector<SeatTurn> seats;
+	int winner = -1, victory = -1;
+};
 struct World
 {
 	virtual ~World() = default;
@@ -45,6 +52,7 @@ struct World
 	virtual void load(const std::filesystem::path &) = 0;
 	virtual void save(const std::filesystem::path &) = 0;
 	virtual int turn() const = 0;
+	virtual GameMilestones milestones() const { return {}; }
 	virtual uint32_t checksum() const = 0;
 	virtual bool validate(int seat, const Bytes &) const = 0;
 	virtual void step(const Frame &) = 0;

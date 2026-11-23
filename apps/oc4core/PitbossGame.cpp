@@ -297,6 +297,20 @@ struct GameWorld final : pb::World
 	}
 	void save(const std::filesystem::path &p) override { session.saveGame(p); }
 	int turn() const override { return GC.getGame().getGameTurn(); }
+	pb::GameMilestones milestones() const override
+	{
+		const auto &game = GC.getGame();
+		pb::GameMilestones result;
+		result.winner = game.getWinner();
+		result.victory = game.getVictory();
+		for (int seat = 0; seat < GC.getMAX_CIV_PLAYERS(); ++seat)
+		{
+			const auto &player = CvPlayerAI::getPlayerNonInl(PlayerTypes(seat));
+			result.seats.push_back(!player.isAlive() || !player.isHuman() ? pb::SeatTurn::Ineligible :
+				player.isTurnActive() ? pb::SeatTurn::Pending : pb::SeatTurn::Completed);
+		}
+		return result;
+	}
 	uint32_t checksum() const override { return uint32_t(GC.getGame().calculateSyncChecksum()); }
 	bool validate(int seat, const pb::Bytes &b) const override
 	{
